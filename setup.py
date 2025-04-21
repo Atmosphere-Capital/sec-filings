@@ -36,4 +36,9 @@ setup(
         "Bug Reports": "https://github.com/pibou/piboufilings/issues",
         "Source": "https://github.com/pibou/piboufilings",
     },
+    tests_require=[
+        'pytest>=7.0.0',
+        'pytest-cov>=4.0.0',
+        'unittest-mock>=1.3.0',
+    ],
 )
