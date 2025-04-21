@@ -115,33 +115,43 @@ class SECDownloader:
         Returns:
             Optional[Dict[str, Any]]: Information about the downloaded filing
         """
-        # Construct the URL
-        # The accession number might contain hyphens, which need to be removed for the URL
-        clean_accession = accession_number.replace('-', '')
-        url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{clean_accession}/{accession_number}.txt"
-        # Download the filing
-        response = self.session.get(url, headers=self.headers)
-        
-        if response.status_code != 200:
+        try:
+            # Construct the URL
+            # The accession number might contain hyphens, which need to be removed for the URL
+            clean_accession = accession_number.replace('-', '')
+            url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{clean_accession}/{accession_number}.txt"
+            # Download the filing
+            response = self.session.get(url, headers=self.headers)
+            
+            if response.status_code != 200:
+                return None
+            
+            # Save raw filing if requested
+            if save_raw:
+                raw_path = self._save_raw_filing(
+                    cik=cik,
+                    form_type=form_type,
+                    accession_number=accession_number,
+                    content=response.text
+                )
+            
+            return {
+                "cik": cik,
+                "accession_number": accession_number,
+                "form_type": form_type,
+                "download_date": datetime.now().strftime("%Y-%m-%d"),
+                "raw_path": raw_path if save_raw else None,
+                "url": url
+            }
+        except requests.RequestException as e:
+            self.logger.error(f"Request error downloading {accession_number}: {str(e)}")
             return None
-        
-        # Save raw filing if requested
-        if save_raw:
-            raw_path = self._save_raw_filing(
-                cik=cik,
-                form_type=form_type,
-                accession_number=accession_number,
-                content=response.text
-            )
-        
-        return {
-            "cik": cik,
-            "accession_number": accession_number,
-            "form_type": form_type,
-            "download_date": datetime.now().strftime("%Y-%m-%d"),
-            "raw_path": raw_path if save_raw else None,
-            "url": url
-        }
+        except IOError as e:
+            self.logger.error(f"IO error saving filing {accession_number}: {str(e)}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error processing {accession_number}: {str(e)}")
+            return None
     
     def _save_raw_filing(
         self,
@@ -224,35 +234,67 @@ class SECDownloader:
         return df_all[['CIK', 'Name', 'Date Filed', 'Form Type', 'accession_number', 'Filename']]
     
     def _parse_form_idx(self, year: int, quarter: int) -> pd.DataFrame:
-        """Parse a specific quarter's form index file."""
-        url = f"https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/form.idx"
-        response = self.session.get(url, headers=self.headers)
+        """
+        Parse a specific quarter's form index file.
         
-        if response.status_code != 200:
-            return pd.DataFrame()
+        Args:
+            year: The year to retrieve data for
+            quarter: The quarter (1-4) to retrieve data for
             
+        Returns:
+            DataFrame containing the parsed index data
+        """
+        url = f"https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/form.idx"
+        self.logger.debug(f"Fetching index data from {url}")
+        
+        try:
+            response = self.session.get(url, headers=self.headers)
+            response.raise_for_status()
+        except requests.HTTPError as e:
+            self.logger.error(f"HTTP error fetching index: {str(e)}")
+            return pd.DataFrame()
+        except requests.RequestException as e:
+            self.logger.error(f"Request error fetching index: {str(e)}")
+            return pd.DataFrame()
+        
         lines = response.text.splitlines()
+        
+        # Find the separator line (all dashes)
         try:
             start_idx = next(i for i, line in enumerate(lines) if set(line.strip()) == {'-'})
         except StopIteration:
+            self.logger.warning(f"Could not find header separator in index file for {year} Q{quarter}")
             return pd.DataFrame()
-            
+        
+        # Parse the data lines
+        column_widths = [12, 62, 12, 12, None]  # Width of each column
+        column_names = ["Form Type", "Name", "CIK", "Date Filed", "Filename"]
         entries = []
-        for line in lines[start_idx + 1:]:
-            try:
-                entry = {
-                    "Form Type": line[0:12].strip(),
-                    "Name": line[12:74].strip(),
-                    "CIK": line[74:86].strip(),
-                    "Date Filed": line[86:98].strip(),
-                    "Filename": line[98:].strip()
-                }
-                entries.append(entry)
-            except Exception as e:
+        
+        for line_num, line in enumerate(lines[start_idx + 1:], start=start_idx + 2):
+            if not line.strip():
                 continue
                 
+            try:
+                # Extract each field based on its position
+                pos = 0
+                entry = {}
+                
+                for i, (width, name) in enumerate(zip(column_widths, column_names)):
+                    if width is None:  # Last column
+                        entry[name] = line[pos:].strip()
+                    else:
+                        entry[name] = line[pos:pos+width].strip()
+                        pos += width
+                        
+                entries.append(entry)
+            except Exception as e:
+                self.logger.warning(f"Error parsing line {line_num}: {str(e)}")
+                continue
+        
+        self.logger.info(f"Parsed {len(entries)} entries from {year} Q{quarter} index")
         return pd.DataFrame(entries)
-    
+
     def _setup_session(self) -> requests.Session:
         """Set up a requests session with retry logic."""
         session = requests.Session()

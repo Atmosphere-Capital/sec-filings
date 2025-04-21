@@ -38,7 +38,7 @@ class FilingLogger:
     
     def log_operation(
         self, 
-        cik: str, 
+        cik: Optional[str] = None, 
         accession_number: Optional[str] = None, 
         download_success: bool = False, 
         download_error_message: Optional[str] = None, 
@@ -48,7 +48,7 @@ class FilingLogger:
         Log a filing operation to the CSV file.
         
         Args:
-            cik: Company CIK number
+            cik: Company CIK number (optional, for system-wide events)
             accession_number: Filing accession number
             download_success: Whether the download was successful
             download_error_message: Error message if download failed
@@ -60,7 +60,7 @@ class FilingLogger:
             writer = csv.writer(f)
             writer.writerow([
                 timestamp,
-                cik,
+                cik or "SYSTEM",
                 accession_number or "",
                 "True" if download_success else "False",
                 download_error_message or "",

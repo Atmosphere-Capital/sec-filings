@@ -14,7 +14,7 @@ from .core.logger import FilingLogger
 from .config.settings import DATA_DIR
 
 def get_filings(
-    cik: Union[str, List[str]],
+    cik: Union[str, List[str], None] = None,
     form_type: str = "13F-HR",
     start_year: int = None,
     end_year: Optional[int] = None,
@@ -26,7 +26,7 @@ def get_filings(
     Download and parse SEC filings for one or more companies.
     
     Args:
-        cik: Company CIK number(s) - can be a single CIK string or a list of CIKs
+        cik: Company CIK number(s) - can be a single CIK string, a list of CIKs, or None to get all CIKs
         form_type: Type of form to download (defaults to '13F-HR')
         start_year: Starting year (defaults to current year)
         end_year: Ending year (defaults to current year)
@@ -48,8 +48,24 @@ def get_filings(
     parser = SECFilingParser(base_dir=str(base_dir))
     logger = FilingLogger(log_dir=log_dir)
     
+    # Get all CIKs if None is provided
+    if cik is None:
+        # Get index data to extract all available CIKs for the specified form type
+        index_data = downloader.get_sec_index_data(start_year, end_year)
+        if not index_data.empty:
+            ciks = index_data[index_data["Form Type"].str.contains(form_type, na=False)]["CIK"].unique().tolist()
+            logger.log_operation(
+                download_success=True,
+                download_error_message=f"Found {len(ciks)} CIKs for form type {form_type} from years {start_year}-{end_year}"
+            )
+        else:
+            logger.log_operation(
+                download_success=False,
+                download_error_message=f"No CIKs found for form type {form_type} from years {start_year}-{end_year}"
+            )
+            return
     # Convert single CIK to list for uniform processing
-    if isinstance(cik, str):
+    elif isinstance(cik, str):
         ciks = [cik]
     else:
         ciks = cik
