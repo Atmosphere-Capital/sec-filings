@@ -18,17 +18,17 @@ setup(
         "lxml>=4.9.0",  # For XML parsing
         "python-dateutil>=2.8.2",  # For date parsing
     ],
-    python_requires=">=3.7",
-    include_package_data=True,
+    python_requires=">=3.8",  # Updated from >=3.7
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Financial and Insurance Industry",
         "License :: Other/Proprietary License",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        # Remove Python 3.7
         "Topic :: Office/Business :: Financial :: Investment",
     ],
     keywords="sec, edgar, filings, financial, 13f, parser",
