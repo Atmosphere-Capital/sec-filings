@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="piboufilings",
+    name="pibou-filings",
     version="0.1.0",
     description="A Python library for downloading and parsing SEC EDGAR filings",
     long_description=open("README.md").read(),
