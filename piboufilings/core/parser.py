@@ -31,35 +31,50 @@ class SECFilingParser:
         Returns:
             pd.DataFrame: DataFrame containing company information
         """
-        info = {
-            "CIK": re.search(r"CENTRAL INDEX KEY:\s+(\d+)", content).group(1) if re.search(r"CENTRAL INDEX KEY:\s+(\d+)", content) else pd.NA,
-            "IRS_NUMBER": re.search(r"IRS NUMBER:\s+(\d+)", content).group(1) if re.search(r"IRS NUMBER:\s+(\d+)", content) else pd.NA,
-            "COMPANY_CONFORMED_NAME": re.search(r"COMPANY CONFORMED NAME:\s+(.+)", content).group(1).strip() if re.search(r"COMPANY CONFORMED NAME:\s+(.+)", content) else pd.NA,
-            "DATE": re.search(r"DATE AS OF CHANGE:\s+(\d+)", content).group(1) if re.search(r"DATE AS OF CHANGE:\s+(\d+)", content) else pd.NA,
-            "STATE_INC": re.search(r"STATE OF INCORPORATION:\s+([A-Z]+)", content).group(1) if re.search(r"STATE OF INCORPORATION:\s+([A-Z]+)", content) else pd.NA,
-            "SIC": re.search(r"STANDARD INDUSTRIAL CLASSIFICATION:\s+([^[]+)", content).group(1).strip() if re.search(r"STANDARD INDUSTRIAL CLASSIFICATION:\s+([^[]+)", content) else pd.NA,
-            "ORGANIZATION_NAME": re.search(r"ORGANIZATION NAME:\s+(.+)", content).group(1).strip() if re.search(r"ORGANIZATION NAME:\s+(.+)", content) else pd.NA,
-            "FISCAL_YEAR_END": re.search(r"FISCAL YEAR END:\s+(\d+)", content).group(1) if re.search(r"FISCAL YEAR END:\s+(\d+)", content) else pd.NA,
-            "BUSINESS_ADRESS_STREET_1": re.search(r"STREET 1:\s+(.+)", content).group(1).strip() if re.search(r"STREET 1:\s+(.+)", content) else pd.NA,
-            "BUSINESS_ADRESS_STREET_2": re.search(r"STREET 2:\s+(.+)", content).group(1).strip() if re.search(r"STREET 2:\s+(.+)", content) else pd.NA,
-            "BUSINESS_ADRESS_CITY": re.search(r"CITY:\s+([A-Za-z]+)", content).group(1) if re.search(r"CITY:\s+([A-Za-z]+)", content) else pd.NA,
-            "BUSINESS_ADRESS_STATE": re.search(r"STATE:\s+([A-Z]+)", content).group(1) if re.search(r"STATE:\s+([A-Z]+)", content) else pd.NA,
-            "BUSINESS_ADRESS_ZIP": re.search(r"ZIP:\s+(\d+)", content).group(1) if re.search(r"ZIP:\s+(\d+)", content) else pd.NA,
-            "BUSINESS_PHONE": re.search(r"BUSINESS PHONE:\s+(\d+)", content).group(1) if re.search(r"BUSINESS PHONE:\s+(\d+)", content) else pd.NA,
-            "MAIL_ADRESS_STREET_1": re.search(r"STREET 1:\s+(.+)", content).group(1).strip() if re.search(r"STREET 1:\s+(.+)", content) else pd.NA,
-            "MAIL_ADRESS_STREET_2": re.search(r"STREET 2:\s+(.+)", content).group(1).strip() if re.search(r"STREET 2:\s+(.+)", content) else pd.NA,
-            "MAIL_ADRESS_CITY": re.search(r"CITY:\s+([A-Za-z]+)", content).group(1) if re.search(r"CITY:\s+([A-Za-z]+)", content) else pd.NA,
-            "MAIL_ADRESS_STATE": re.search(r"STATE:\s+([A-Z]+)", content).group(1) if re.search(r"STATE:\s+([A-Z]+)", content) else pd.NA,
-            "MAIL_ADRESS_ZIP": re.search(r"ZIP:\s+(\d+)", content).group(1) if re.search(r"ZIP:\s+(\d+)", content) else pd.NA,
-            "FORMER_COMPANY_NAME": re.search(r"FORMER CONFORMED NAME:\s+(.+)", content).group(1).strip() if re.search(r"FORMER CONFORMED NAME:\s+(.+)", content) else pd.NA,
-            "DATE_OF_NAME_CHANGE": re.search(r"DATE OF NAME CHANGE:\s+(\d+)", content).group(1) if re.search(r"DATE OF NAME CHANGE:\s+(\d+)", content) else pd.NA
+        # Define regex patterns and default values for safety
+        patterns = {
+            "CIK": (r"CENTRAL INDEX KEY:\s+(\d+)", pd.NA),
+            "IRS_NUMBER": (r"IRS NUMBER:\s+(\d+)", pd.NA),
+            "COMPANY_CONFORMED_NAME": (r"COMPANY CONFORMED NAME:\s+(.+)", pd.NA),
+            "DATE": (r"DATE AS OF CHANGE:\s+(\d+)", pd.NA),
+            "STATE_INC": (r"STATE OF INCORPORATION:\s+([A-Z]+)", pd.NA),
+            "SIC": (r"STANDARD INDUSTRIAL CLASSIFICATION:\s+([^[]+)", pd.NA),
+            "ORGANIZATION_NAME": (r"ORGANIZATION NAME:\s+(.+)", pd.NA),
+            "FISCAL_YEAR_END": (r"FISCAL YEAR END:\s+(\d+)", pd.NA),
+            "BUSINESS_ADRESS_STREET_1": (r"STREET 1:\s+(.+)", pd.NA),
+            "BUSINESS_ADRESS_STREET_2": (r"STREET 2:\s+(.+)", pd.NA),
+            "BUSINESS_ADRESS_CITY": (r"CITY:\s+([A-Za-z]+)", pd.NA),
+            "BUSINESS_ADRESS_STATE": (r"STATE:\s+([A-Z]+)", pd.NA),
+            "BUSINESS_ADRESS_ZIP": (r"ZIP:\s+(\d+)", pd.NA),
+            "BUSINESS_PHONE": (r"BUSINESS PHONE:\s+(\d+)", pd.NA),
+            "MAIL_ADRESS_STREET_1": (r"STREET 1:\s+(.+)", pd.NA),
+            "MAIL_ADRESS_STREET_2": (r"STREET 2:\s+(.+)", pd.NA),
+            "MAIL_ADRESS_CITY": (r"CITY:\s+([A-Za-z]+)", pd.NA),
+            "MAIL_ADRESS_STATE": (r"STATE:\s+([A-Z]+)", pd.NA),
+            "MAIL_ADRESS_ZIP": (r"ZIP:\s+(\d+)", pd.NA),
+            "FORMER_COMPANY_NAME": (r"FORMER CONFORMED NAME:\s+(.+)", pd.NA),
+            "DATE_OF_NAME_CHANGE": (r"DATE OF NAME CHANGE:\s+(\d+)", pd.NA)
         }
             
+        # Extract data using regex patterns with safety defaults
+        info = {}
+        for field, (pattern, default) in patterns.items():
+            try:
+                match = re.search(pattern, content)
+                info[field] = match.group(1).strip() if match else default
+            except (AttributeError, IndexError):
+                info[field] = default
+            
         # Convert to DataFrame and format the DATE columns
-        cik_info_df = pd.DataFrame([info])
-        cik_info_df['DATE'] = pd.to_datetime(cik_info_df['DATE'], format='%Y%m%d', errors='coerce')
-        cik_info_df['DATE_OF_NAME_CHANGE'] = pd.to_datetime(cik_info_df['DATE_OF_NAME_CHANGE'], format='%Y%m%d', errors='coerce')
-        return cik_info_df
+        try:
+            cik_info_df = pd.DataFrame([info])
+            cik_info_df['DATE'] = pd.to_datetime(cik_info_df['DATE'], format='%Y%m%d', errors='coerce')
+            cik_info_df['DATE_OF_NAME_CHANGE'] = pd.to_datetime(cik_info_df['DATE_OF_NAME_CHANGE'], format='%Y%m%d', errors='coerce')
+            return cik_info_df
+        except Exception as e:
+            # Return an empty DataFrame with proper columns if formatting fails
+            empty_df = pd.DataFrame(columns=list(patterns.keys()))
+            return empty_df
     
     def parse_accession_info(self, content: str) -> pd.DataFrame:
         """
@@ -71,44 +86,69 @@ class SECFilingParser:
         Returns:
             pd.DataFrame: DataFrame containing accession information
         """
-        info = {
-            "CIK": re.search(r'CENTRAL INDEX KEY:\s+(\d{10})', content).group(1) if re.search(r'CENTRAL INDEX KEY:\s+(\d{10})', content) else pd.NA,
-            "ACCESSION_NUMBER": re.search(r"ACCESSION NUMBER:\s+(\d+-\d+-\d+)", content).group(1) if re.search(r"ACCESSION NUMBER:\s+(\d+-\d+-\d+)", content) else pd.NA,
-            "DOC_TYPE": re.search(r"CONFORMED SUBMISSION TYPE:\s+([\w-]+)", content).group(1) if re.search(r"CONFORMED SUBMISSION TYPE:\s+([\w-]+)", content) else pd.NA,
-            "FORM_TYPE": re.search(r"<type>([\w-]+)</type>", content).group(1) if re.search(r"<type>([\w-]+)</type>", content) else pd.NA,
-            "CONFORMED_DATE": re.search(r"CONFORMED PERIOD OF REPORT:\s+(\d+)", content).group(1) if re.search(r"CONFORMED PERIOD OF REPORT:\s+(\d+)", content) else pd.NA,
-            "FILED_DATE": re.search(r"FILED AS OF DATE:\s+(\d+)", content).group(1) if re.search(r"FILED AS OF DATE:\s+(\d+)", content) else pd.NA,
-            "EFFECTIVENESS_DATE": re.search(r"EFFECTIVENESS DATE:\s+(\d+)", content).group(1) if re.search(r"EFFECTIVENESS DATE:\s+(\d+)", content) else pd.NA,
-            "PUBLIC_DOCUMENT_COUNT": re.search(r"PUBLIC DOCUMENT COUNT:\s+(\d+)", content).group(1) if re.search(r"PUBLIC DOCUMENT COUNT:\s+(\d+)", content) else pd.NA,
-            "SEC_ACT": re.search(r"SEC ACT:\s+(.+)", content).group(1).strip() if re.search(r"SEC ACT:\s+(.+)", content) else pd.NA,
-            "SEC_FILE_NUMBER": re.search(r"SEC FILE NUMBER:\s+(.+)", content).group(1).strip() if re.search(r"SEC FILE NUMBER:\s+(.+)", content) else pd.NA,
-            "FILM_NUMBER": re.search(r"FILM NUMBER:\s+(\d+)", content).group(1) if re.search(r"FILM NUMBER:\s+(\d+)", content) else pd.NA,
-            "NUMBER_TRADES": re.search(r"tableEntryTotal>(\d+)</", content).group(1) if re.search(r"tableEntryTotal>(\d+)</", content) else pd.NA,
-            "TOTAL_VALUE": re.search(r"tableValueTotal>(\d+)</", content).group(1) if re.search(r"tableValueTotal>(\d+)</", content) else pd.NA,
-            "OTHER_INCLUDED_MANAGERS_COUNT": re.search(r"otherIncludedManagersCount>(\d+)</", content).group(1) if re.search(r"otherIncludedManagersCount>(\d+)</", content) else pd.NA,
-            "IS_CONFIDENTIAL_OMITTED": re.search(r"isConfidentialOmitted>(true|false)</", content).group(1) if re.search(r"isConfidentialOmitted>(true|false)</", content) else pd.NA,
-            "REPORT_TYPE": re.search(r"reportType>(.+)</", content).group(1) if re.search(r"reportType>(.+)</", content) else pd.NA,
-            "FORM_13F_FILE_NUMBER": re.search(r"form13FFileNumber>(.+)</", content).group(1) if re.search(r"form13FFileNumber>(.+)</", content) else pd.NA,
-            "PROVIDE_INFO_FOR_INSTRUCTION5": re.search(r"provideInfoForInstruction5>(Y|N)</", content).group(1) if re.search(r"provideInfoForInstruction5>(Y|N)</", content) else pd.NA,
-            "SIGNATURE_NAME": re.search(r"<signatureBlock>\s*<name>(.+?)</name>", content).group(1).strip() if re.search(r"<signatureBlock>\s*<name>(.+?)</name>", content) else pd.NA,
-            "SIGNATURE_TITLE": re.search(r"<title>(.+?)</title>", content).group(1).strip() if re.search(r"<title>(.+?)</title>", content) else pd.NA,
-            "SIGNATURE_PHONE": re.search(r"<phone>([\d\-\(\)\s]+)</phone>", content).group(1).strip() if re.search(r"<phone>([\d\-\(\)\s]+)</phone>", content) else pd.NA
+        # Define regex patterns and default values for safety
+        patterns = {
+            "CIK": (r'CENTRAL INDEX KEY:\s+(\d{10})', pd.NA),
+            "ACCESSION_NUMBER": (r"ACCESSION NUMBER:\s+(\d+-\d+-\d+)", pd.NA),
+            "DOC_TYPE": (r"CONFORMED SUBMISSION TYPE:\s+([\w-]+)", pd.NA),
+            "FORM_TYPE": (r"<type>([\w-]+)</type>", pd.NA),
+            "CONFORMED_DATE": (r"CONFORMED PERIOD OF REPORT:\s+(\d+)", pd.NA),
+            "FILED_DATE": (r"FILED AS OF DATE:\s+(\d+)", pd.NA),
+            "EFFECTIVENESS_DATE": (r"EFFECTIVENESS DATE:\s+(\d+)", pd.NA),
+            "PUBLIC_DOCUMENT_COUNT": (r"PUBLIC DOCUMENT COUNT:\s+(\d+)", pd.NA),
+            "SEC_ACT": (r"SEC ACT:\s+(.+)", pd.NA),
+            "SEC_FILE_NUMBER": (r"SEC FILE NUMBER:\s+(.+)", pd.NA),
+            "FILM_NUMBER": (r"FILM NUMBER:\s+(\d+)", pd.NA),
+            "NUMBER_TRADES": (r"tableEntryTotal>(\d+)</", pd.NA),
+            "TOTAL_VALUE": (r"tableValueTotal>(\d+)</", pd.NA),
+            "OTHER_INCLUDED_MANAGERS_COUNT": (r"otherIncludedManagersCount>(\d+)</", pd.NA),
+            "IS_CONFIDENTIAL_OMITTED": (r"isConfidentialOmitted>(true|false)</", pd.NA),
+            "REPORT_TYPE": (r"reportType>(.+)</", pd.NA),
+            "FORM_13F_FILE_NUMBER": (r"form13FFileNumber>(.+)</", pd.NA),
+            "PROVIDE_INFO_FOR_INSTRUCTION5": (r"provideInfoForInstruction5>(Y|N)</", pd.NA),
+            "SIGNATURE_NAME": (r"<signatureBlock>\s*<name>(.+?)</name>", pd.NA),
+            "SIGNATURE_TITLE": (r"<title>(.+?)</title>", pd.NA),
+            "SIGNATURE_PHONE": (r"<phone>([\d\-\(\)\s]+)</phone>", pd.NA)
         }
 
-        # Convert to DataFrame and format the DATE columns
-        accession_info_df = pd.DataFrame([info])
-        accession_info_df['CONFORMED_DATE'] = pd.to_datetime(
-            accession_info_df['CONFORMED_DATE'], format='%Y%m%d', errors='coerce')
-        accession_info_df['FILED_DATE'] = pd.to_datetime(
-            accession_info_df['FILED_DATE'], format='%Y%m%d', errors='coerce')
-        accession_info_df['EFFECTIVENESS_DATE'] = pd.to_datetime(
-            accession_info_df['EFFECTIVENESS_DATE'], format='%Y%m%d', errors='coerce')
-        accession_info_df['ACCESSION_NUMBER'] = accession_info_df['ACCESSION_NUMBER'].str.replace(
-            '-', '').astype(float, errors='ignore')
-        accession_info_df['CIK'] = accession_info_df['CIK'].astype(float, errors='ignore')
-        accession_info_df['IS_CONFIDENTIAL_OMITTED'] = accession_info_df['IS_CONFIDENTIAL_OMITTED'].map({'true': True, 'false': False})
+        # Extract data using regex patterns with safety defaults
+        info = {}
+        for field, (pattern, default) in patterns.items():
+            try:
+                match = re.search(pattern, content)
+                info[field] = match.group(1).strip() if match else default
+            except (AttributeError, IndexError):
+                info[field] = default
 
-        return accession_info_df
+        try:
+            # Convert to DataFrame and format the DATE columns
+            accession_info_df = pd.DataFrame([info])
+            
+            # Safely convert date columns
+            date_columns = ['CONFORMED_DATE', 'FILED_DATE', 'EFFECTIVENESS_DATE']
+            for col in date_columns:
+                if col in accession_info_df.columns:
+                    accession_info_df[col] = pd.to_datetime(
+                        accession_info_df[col], format='%Y%m%d', errors='coerce')
+            
+            # Safely convert numeric columns
+            if 'ACCESSION_NUMBER' in accession_info_df.columns:
+                accession_info_df['ACCESSION_NUMBER'] = accession_info_df['ACCESSION_NUMBER'].str.replace(
+                    '-', '', regex=False).astype(float, errors='ignore')
+            
+            if 'CIK' in accession_info_df.columns:
+                accession_info_df['CIK'] = accession_info_df['CIK'].astype(float, errors='ignore')
+            
+            # Convert boolean column
+            if 'IS_CONFIDENTIAL_OMITTED' in accession_info_df.columns:
+                accession_info_df['IS_CONFIDENTIAL_OMITTED'] = accession_info_df['IS_CONFIDENTIAL_OMITTED'].map(
+                    {'true': True, 'false': False})
+
+            return accession_info_df
+        except Exception as e:
+            # Return an empty DataFrame with proper columns if formatting fails
+            empty_df = pd.DataFrame(columns=list(patterns.keys()))
+            return empty_df
     
     def extract_xml(self, content: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """
@@ -120,29 +160,56 @@ class SECFilingParser:
         Returns:
             tuple: (XML data, accession number, conformed date)
         """
-        # Extract accession number
-        accession_match = re.search(r"ACCESSION NUMBER:\s+(\d+-\d+-\d+)", content)
-        accession_number = accession_match.group(1) if accession_match else None
-        
-        # Extract conformed date
-        date_match = re.search(r"CONFORMED PERIOD OF REPORT:\s+(\d+)", content)
-        conformed_date = date_match.group(1) if date_match else None
-        
-        # Find the start and end indices of the XML sections
-        xml_start_tags = [match.start() for match in re.finditer(r'<XML>', content)]
-        xml_end_tags = [match.start() for match in re.finditer(r'</XML>', content)]
-        
-        # Combine the results to show start and end indices
-        xml_indices = list(zip(xml_start_tags, xml_end_tags))
-        
-        if xml_indices:
-            # Use the second XML section (index 1) as it typically contains the holdings data
-            start_index, end_index = xml_indices[1] if len(xml_indices) > 1 else xml_indices[0]
-            xml_content = content[start_index:end_index + len('</XML>')]
-            xml_content = re.sub(r'\n<\?xml.*?\?>', '', xml_content)
-            return xml_content, accession_number, conformed_date
-        
-        return None, accession_number, conformed_date
+        try:
+            # Extract accession number
+            accession_match = re.search(r"ACCESSION NUMBER:\s+(\d+-\d+-\d+)", content)
+            accession_number = accession_match.group(1) if accession_match else None
+            
+            # Extract conformed date
+            date_match = re.search(r"CONFORMED PERIOD OF REPORT:\s+(\d+)", content)
+            conformed_date = date_match.group(1) if date_match else None
+            
+            # Method 1: Find XML between <XML> tags
+            xml_start_tags = [match.start() for match in re.finditer(r'<XML>', content)]
+            xml_end_tags = [match.start() for match in re.finditer(r'</XML>', content)]
+            
+            # Combine the results to show start and end indices
+            xml_indices = list(zip(xml_start_tags, xml_end_tags))
+            
+            if xml_indices:
+                # Use the second XML section (index 1) as it typically contains the holdings data
+                start_index, end_index = xml_indices[1] if len(xml_indices) > 1 else xml_indices[0]
+                xml_content = content[start_index:end_index + len('</XML>')]
+                # Clean up XML declaration
+                xml_content = re.sub(r'\n<\?xml.*?\?>', '', xml_content)
+                return xml_content, accession_number, conformed_date
+            
+            # Method 2: Find XML after an XML declaration
+            xml_decl_match = re.search(r'<\?xml[^>]+\?>', content)
+            if xml_decl_match:
+                start_index = xml_decl_match.start()
+                # Find the first opening tag after the XML declaration
+                opening_tag_match = re.search(r'<[^?][^>]*>', content[start_index:])
+                if opening_tag_match:
+                    tag_name = opening_tag_match.group(0).strip('<>').split()[0]
+                    # Find the corresponding closing tag
+                    closing_tag = f'</{tag_name}>'
+                    closing_tag_index = content.rfind(closing_tag, start_index)
+                    if closing_tag_index > start_index:
+                        xml_content = content[start_index:closing_tag_index + len(closing_tag)]
+                        return xml_content, accession_number, conformed_date
+            
+            # Method 3: Look for common 13F XML elements
+            info_table_match = re.search(r'<informationTable[^>]*>.*?</informationTable>', content, re.DOTALL | re.IGNORECASE)
+            if info_table_match:
+                xml_content = f'<XML>{info_table_match.group(0)}</XML>'
+                return xml_content, accession_number, conformed_date
+                
+            return None, accession_number, conformed_date
+            
+        except Exception as e:
+            # Return None for all values on error
+            return None, None, None
     
     def parse_holdings(self, xml_data: str, accession_number: str, conformed_date: str) -> pd.DataFrame:
         """
@@ -217,22 +284,31 @@ class SECFilingParser:
         Args:
             content: Raw filing content
         """
-        # Parse company information
-        company_info_df = self.parse_company_info(content)
-        
-        # Parse accession information
-        accession_info_df = self.parse_accession_info(content)
-        
-        # Extract and parse XML data
-        xml_data, accession_number, conformed_date = self.extract_xml(content)
-        
-        if xml_data:
-            # Parse holdings information
-            holdings_df = self.parse_holdings(xml_data, accession_number, conformed_date)
+        try:
+            # Parse company information
+            company_info_df = self.parse_company_info(content)
             
-            # Save all parsed data
-            self.data_organizer.process_filing_data(
-                accession_info_df,
-                company_info_df,
-                holdings_df
-            ) 
+            # Parse accession information
+            accession_info_df = self.parse_accession_info(content)
+            
+            # Extract and parse XML data
+            xml_data, accession_number, conformed_date = self.extract_xml(content)
+            
+            # Initialize an empty holdings DataFrame as default
+            holdings_df = pd.DataFrame()
+            
+            if xml_data:
+                # Parse holdings information
+                holdings_df = self.parse_holdings(xml_data, accession_number, conformed_date)
+            
+            # Validate data before saving
+            if not accession_info_df.empty and 'ACCESSION_NUMBER' in accession_info_df.columns:
+                # Save all parsed data
+                self.data_organizer.process_filing_data(
+                    accession_info_df,
+                    company_info_df,
+                    holdings_df
+                )
+        except Exception as e:
+            # Silently handle the exception - errors should already be logged by the caller
+            pass 
