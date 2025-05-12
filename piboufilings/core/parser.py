@@ -247,6 +247,7 @@ class SECFilingParser:
                     'SHARE_VALUE': info_table.find('ns1:value', namespaces).text if info_table.find('ns1:value', namespaces) is not None else pd.NA,
                     'SHARE_AMOUNT': info_table.find('ns1:shrsOrPrnAmt/ns1:sshPrnamt', namespaces).text if info_table.find('ns1:shrsOrPrnAmt/ns1:sshPrnamt', namespaces) is not None else pd.NA,
                     'SH_PRN': info_table.find('ns1:shrsOrPrnAmt/ns1:sshPrnamtType', namespaces).text if info_table.find('ns1:shrsOrPrnAmt/ns1:sshPrnamtType', namespaces) is not None else pd.NA,
+                    'PUT_CALL': info_table.find('ns1:putCall', namespaces).text if info_table.find('ns1:putCall', namespaces) is not None else pd.NA,
                     'DISCRETION': info_table.find('ns1:investmentDiscretion', namespaces).text if info_table.find('ns1:investmentDiscretion', namespaces) is not None else pd.NA,
                     'SOLE_VOTING_AUTHORITY': info_table.find('ns1:votingAuthority/ns1:Sole', namespaces).text if info_table.find('ns1:votingAuthority/ns1:Sole', namespaces) is not None else pd.NA,
                     'SHARED_VOTING_AUTHORITY': info_table.find('ns1:votingAuthority/ns1:Shared', namespaces).text if info_table.find('ns1:votingAuthority/ns1:Shared', namespaces) is not None else pd.NA,
