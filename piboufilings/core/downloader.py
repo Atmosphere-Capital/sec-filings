@@ -51,7 +51,8 @@ class SECDownloader:
         form_type: str,
         start_year: int,
         end_year: Optional[int] = None,
-        save_raw: bool = True
+        save_raw: bool = True,
+        show_progress: bool = True
     ) -> pd.DataFrame:
         """
         Download all filings of a specific type for a company within a date range.
@@ -62,6 +63,7 @@ class SECDownloader:
             start_year: Starting year for the search
             end_year: Ending year (defaults to current year)
             save_raw: Whether to save raw filing data (defaults to True)
+            show_progress: Whether to show progress bars (defaults to True)
             
         Returns:
             pd.DataFrame: DataFrame containing information about downloaded filings
@@ -88,9 +90,19 @@ class SECDownloader:
                     )
                     return pd.DataFrame()
                 
-                # Download each filing
+                # Download each filing with progress bar
                 downloaded_filings = []
-                for _, filing in company_filings.iterrows():
+                
+                # Add tqdm progress bar
+                from tqdm import tqdm
+                filing_iterator = tqdm(
+                    company_filings.iterrows(), 
+                    desc=f"Downloading filings for CIK {cik}", 
+                    total=len(company_filings),
+                    disable=not show_progress
+                ) if show_progress else company_filings.iterrows()
+                
+                for _, filing in filing_iterator:
                     # Extract accession number from Filename
                     accession_match = re.search(r'edgar/data/\d+/([0-9\-]+)\.txt', filing["Filename"])
                     if not accession_match:

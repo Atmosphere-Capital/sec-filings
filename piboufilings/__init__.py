@@ -7,6 +7,7 @@ import pandas as pd
 from datetime import datetime
 import os
 from pathlib import Path
+from tqdm import tqdm
 
 from .core.downloader import SECDownloader
 from .core.parser import SECFilingParser
@@ -20,7 +21,8 @@ def get_filings(
     end_year: Optional[int] = None,
     user_agent: Optional[str] = None,
     base_dir: str = "./data_parse",
-    log_dir: str = "./logs"
+    log_dir: str = "./logs",
+    show_progress: bool = True
 ) -> None:
     """
     Download and parse SEC filings for one or more companies.
@@ -33,6 +35,7 @@ def get_filings(
         user_agent: Email address for SEC's fair access rules
         base_dir: Base directory for parsed data (defaults to './data_parse')
         log_dir: Directory to store log files (defaults to './logs')
+        show_progress: Whether to show progress bars (defaults to True)
     """
     if start_year is None:
         start_year = datetime.today().year
@@ -75,15 +78,17 @@ def get_filings(
     all_parsed_files = {}
     all_metadata = {}
     
-    # Process each CIK
-    for current_cik in ciks:
+    # Process each CIK with progress bar
+    cik_iterator = tqdm(ciks, desc="Processing CIKs", disable=not show_progress) if show_progress else ciks
+    for current_cik in cik_iterator:
         # Download filings
         try:
             downloaded = downloader.download_filings(
                 cik=current_cik,
                 form_type=form_type,
                 start_year=start_year,
-                end_year=end_year
+                end_year=end_year,
+                show_progress=show_progress
             )
             
             if downloaded.empty:
@@ -100,7 +105,15 @@ def get_filings(
             # For 13F filings, automatically parse them
             parsed_files = {}
             if form_type.startswith("13F"):
-                for _, filing in downloaded.iterrows():
+                # Add progress bar for filing processing
+                filing_iterator = tqdm(
+                    downloaded.iterrows(), 
+                    desc=f"Parsing filings for CIK {current_cik}", 
+                    total=len(downloaded),
+                    disable=not show_progress
+                ) if show_progress else downloaded.iterrows()
+                
+                for _, filing in filing_iterator:
                     # Parse the filing
                     try:
                         raw_path = filing["raw_path"]
