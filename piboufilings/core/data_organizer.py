@@ -83,8 +83,14 @@ class DataOrganizer:
                     # Update the existing entry with new data
                     existing_df.loc[existing_df['CIK'] == new_cik] = company_info_df.iloc[0]
                 else:
-                    # Append new data
-                    existing_df = pd.concat([existing_df, company_info_df], ignore_index=True)
+                    # Filter out empty or all-NA columns before concatenation
+                    # This addresses the FutureWarning from pandas
+                    company_info_filtered = company_info_df.dropna(axis=1, how='all')
+                    
+                    # Ensure the filtered DataFrame has at least the CIK column
+                    if 'CIK' in company_info_filtered.columns:
+                        # Append new data
+                        existing_df = pd.concat([existing_df, company_info_filtered], ignore_index=True)
                 
                 # Save the updated DataFrame
                 existing_df.to_csv(self.company_info_file, index=False)

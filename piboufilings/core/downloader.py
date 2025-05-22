@@ -9,8 +9,10 @@ import pandas as pd
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from tqdm import tqdm
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..config.settings import (
     SEC_MAX_REQ_PER_SEC,
@@ -25,25 +27,35 @@ from ..config.settings import (
 )
 
 from .logger import FilingLogger
+from .rate_limiter import GlobalRateLimiter
 
 class SECDownloader:
     """A class to handle downloading SEC EDGAR filings."""
     
-    def __init__(self, user_agent: Optional[str] = None, log_dir: str = "./logs"):
+    def __init__(self, user_agent: str, log_dir: str = "./logs", max_workers: int = 5):
         """
         Initialize the SEC downloader.
         
         Args:
-            user_agent: Optional custom user agent string. If not provided,
-                       uses the default from settings.
+            user_agent: Email address for SEC's fair access rules (required)
             log_dir: Directory to store log files (defaults to './logs')
+            max_workers: Maximum number of parallel download workers (defaults to 5)
         """
         self.session = self._setup_session()
+        
+        # Create headers with the provided user_agent
         self.headers = DEFAULT_HEADERS.copy()
-        if user_agent:
-            self.headers["User-Agent"] = user_agent
+        self.headers["User-Agent"] = f"piboufilings/0.1.0 ({user_agent})"
+            
         self.logger = FilingLogger(log_dir=log_dir)
         self.last_request_time = time.time() - REQUEST_DELAY  # Initialize to allow immediate first request
+        self.max_workers = max_workers
+        
+        # Initialize the global rate limiter
+        self.rate_limiter = GlobalRateLimiter(
+            rate=SEC_MAX_REQ_PER_SEC,
+            safety_factor=SAFETY_FACTOR
+        )
             
     def download_filings(
         self,
@@ -90,42 +102,73 @@ class SECDownloader:
                     )
                     return pd.DataFrame()
                 
-                # Download each filing with progress bar
+                # Download filings in parallel
                 downloaded_filings = []
                 
-                # Add tqdm progress bar
-                from tqdm import tqdm
-                filing_iterator = tqdm(
-                    company_filings.iterrows(), 
-                    desc=f"Downloading filings for CIK {cik}", 
-                    total=len(company_filings),
-                    disable=not show_progress
-                ) if show_progress else company_filings.iterrows()
+                # Create a progress bar for the user
+                pbar = None
+                if show_progress:
+                    pbar = tqdm(
+                        total=len(company_filings),
+                        desc=f"Downloading filings for CIK {cik}"
+                    )
                 
-                for _, filing in filing_iterator:
-                    # Extract accession number from Filename
-                    accession_match = re.search(r'edgar/data/\d+/([0-9\-]+)\.txt', filing["Filename"])
-                    if not accession_match:
+                # Define function to download a single filing
+                def download_single_filing_wrapper(filing):
+                    try:
+                        # Extract accession number from Filename
+                        accession_match = re.search(r'edgar/data/\d+/([0-9\-]+)\.txt', filing["Filename"])
+                        if not accession_match:
+                            self.logger.log_operation(
+                                cik=cik,
+                                download_success=False,
+                                download_error_message=f"Invalid filename format: {filing['Filename']}"
+                            )
+                            return None
+                            
+                        accession_number = accession_match.group(1)
+                        
+                        # Download the filing
+                        filing_info = self._download_single_filing(
+                            cik=cik,
+                            accession_number=accession_number,
+                            form_type=form_type,
+                            save_raw=save_raw
+                        )
+                        
+                        # Update progress bar
+                        if pbar:
+                            pbar.update(1)
+                            
+                        return filing_info
+                    except Exception as e:
+                        # Log the error but don't propagate it to allow other downloads to continue
                         self.logger.log_operation(
                             cik=cik,
                             download_success=False,
-                            download_error_message=f"Invalid filename format: {filing['Filename']}"
+                            download_error_message=f"Error downloading filing: {str(e)}"
                         )
-                        continue
-                        
-                    accession_number = accession_match.group(1)
+                        if pbar:
+                            pbar.update(1)
+                        return None
+                
+                # Use ThreadPoolExecutor to download filings in parallel
+                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                    # Submit all download tasks
+                    future_to_filing = {
+                        executor.submit(download_single_filing_wrapper, filing): filing 
+                        for _, filing in company_filings.iterrows()
+                    }
                     
-                    # Rate limiting
-                    self._respect_rate_limit()
-                    
-                    filing_info = self._download_single_filing(
-                        cik=cik,
-                        accession_number=accession_number,
-                        form_type=form_type,
-                        save_raw=save_raw
-                    )
-                    if filing_info:
-                        downloaded_filings.append(filing_info)
+                    # Process completed downloads
+                    for future in as_completed(future_to_filing):
+                        filing_info = future.result()
+                        if filing_info:
+                            downloaded_filings.append(filing_info)
+                
+                # Close progress bar
+                if pbar:
+                    pbar.close()
                 
                 self.logger.log_operation(
                     cik=cik,
@@ -149,13 +192,9 @@ class SECDownloader:
             return pd.DataFrame()
     
     def _respect_rate_limit(self):
-        """Ensure requests comply with SEC rate limits."""
-        current_time = time.time()
-        elapsed = current_time - self.last_request_time
-        if elapsed < REQUEST_DELAY:
-            sleep_time = REQUEST_DELAY - elapsed
-            time.sleep(sleep_time)
-        self.last_request_time = time.time()
+        """Ensure requests comply with SEC rate limits using the global rate limiter."""
+        # Use the global rate limiter to control request rate
+        self.rate_limiter.acquire(block=True)
     
     def _download_single_filing(
         self,
@@ -181,6 +220,10 @@ class SECDownloader:
             # The accession number might contain hyphens, which need to be removed for the URL
             clean_accession = accession_number.replace('-', '')
             url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{clean_accession}/{accession_number}.txt"
+            
+            # Apply rate limiting before making the request
+            self._respect_rate_limit()
+            
             # Download the filing
             response = self.session.get(url, headers=self.headers)
             
@@ -323,7 +366,7 @@ class SECDownloader:
                     if year > current_year or (year == current_year and quarter > current_quarter):
                         continue
                         
-                    # Rate limiting
+                    # Apply rate limiting before making the request
                     self._respect_rate_limit()
                     
                     df = self._parse_form_idx(year, quarter)
@@ -382,6 +425,10 @@ class SECDownloader:
         """
         try:
             url = f"https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/form.idx"
+            
+            # Apply rate limiting before making the request
+            self._respect_rate_limit()
+            
             response = self.session.get(url, headers=self.headers)
             
             if response.status_code != 200:

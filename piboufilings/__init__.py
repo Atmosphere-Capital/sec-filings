@@ -10,32 +10,35 @@ from pathlib import Path
 from tqdm import tqdm
 
 from .core.downloader import SECDownloader
-from .core.parser import SECFilingParser
 from .core.logger import FilingLogger
+from .core.parser import SECFilingParser  # For backward compatibility
+from .parsers import ParserFactory
 from .config.settings import DATA_DIR
 
 def get_filings(
+    user_agent: str,
     cik: Union[str, List[str], None] = None,
     form_type: str = "13F-HR",
     start_year: int = None,
     end_year: Optional[int] = None,
-    user_agent: Optional[str] = None,
     base_dir: str = "./data_parse",
     log_dir: str = "./logs",
-    show_progress: bool = True
+    show_progress: bool = True,
+    max_workers: int = 5
 ) -> None:
     """
     Download and parse SEC filings for one or more companies.
     
     Args:
+        user_agent: Email address for SEC's fair access rules (required)
         cik: Company CIK number(s) - can be a single CIK string, a list of CIKs, or None to get all CIKs
         form_type: Type of form to download (defaults to '13F-HR')
         start_year: Starting year (defaults to current year)
         end_year: Ending year (defaults to current year)
-        user_agent: Email address for SEC's fair access rules
         base_dir: Base directory for parsed data (defaults to './data_parse')
         log_dir: Directory to store log files (defaults to './logs')
         show_progress: Whether to show progress bars (defaults to True)
+        max_workers: Maximum number of parallel download workers (defaults to 5)
     """
     if start_year is None:
         start_year = datetime.today().year
@@ -46,9 +49,8 @@ def get_filings(
     # Convert base_dir to absolute path
     base_dir = Path(base_dir).resolve()
     
-    # Initialize downloader, parser, and logger
-    downloader = SECDownloader(user_agent=user_agent)
-    parser = SECFilingParser(base_dir=str(base_dir))
+    # Initialize downloader and logger
+    downloader = SECDownloader(user_agent=user_agent, log_dir=log_dir, max_workers=max_workers)
     logger = FilingLogger(log_dir=log_dir)
     
     # Get all CIKs if None is provided
@@ -102,52 +104,55 @@ def get_filings(
                 all_metadata[current_cik] = pd.DataFrame()
                 continue
             
-            # For 13F filings, automatically parse them
+            # For filings, automatically parse them using the appropriate parser
             parsed_files = {}
-            if form_type.startswith("13F"):
-                # Add progress bar for filing processing
-                filing_iterator = tqdm(
-                    downloaded.iterrows(), 
-                    desc=f"Parsing filings for CIK {current_cik}", 
-                    total=len(downloaded),
-                    disable=not show_progress
-                ) if show_progress else downloaded.iterrows()
-                
-                for _, filing in filing_iterator:
-                    # Parse the filing
-                    try:
-                        raw_path = filing["raw_path"]
-                        if os.path.exists(raw_path):
-                            with open(raw_path, 'r', encoding='utf-8') as f:
-                                content = f.read()
-                            
-                            # Process the filing using the parser's process_filing method
-                            parser.process_filing(content)
-                            
-                            # Log successful parse
-                            logger.log_operation(
-                                cik=current_cik,
-                                accession_number=filing["accession_number"],
-                                download_success=True,
-                                parse_success=True
-                            )
-                        else:
-                            logger.log_operation(
-                                cik=current_cik,
-                                accession_number=filing["accession_number"],
-                                download_success=True,
-                                parse_success=False,
-                                download_error_message=f"Raw file not found at {raw_path}"
-                            )
-                    except Exception as e:
-                        # Log parse error
+            
+            # Create a parser for the form type
+            parser = ParserFactory.create_parser(form_type=form_type, base_dir=str(base_dir))
+            
+            # Add progress bar for filing processing
+            filing_iterator = tqdm(
+                downloaded.iterrows(), 
+                desc=f"Parsing filings for CIK {current_cik}", 
+                total=len(downloaded),
+                disable=not show_progress
+            ) if show_progress else downloaded.iterrows()
+            
+            for _, filing in filing_iterator:
+                # Parse the filing
+                try:
+                    raw_path = filing["raw_path"]
+                    if os.path.exists(raw_path):
+                        with open(raw_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        
+                        # Process the filing using the parser's process_filing method
+                        parser.process_filing(content)
+                        
+                        # Log successful parse
+                        logger.log_operation(
+                            cik=current_cik,
+                            accession_number=filing["accession_number"],
+                            download_success=True,
+                            parse_success=True
+                        )
+                    else:
                         logger.log_operation(
                             cik=current_cik,
                             accession_number=filing["accession_number"],
                             download_success=True,
                             parse_success=False,
-                            download_error_message=f"Parse error: {str(e)}"
+                            download_error_message=f"Raw file not found at {raw_path}"
                         )
+                except Exception as e:
+                    # Log parse error
+                    logger.log_operation(
+                        cik=current_cik,
+                        accession_number=filing["accession_number"],
+                        download_success=True,
+                        parse_success=False,
+                        download_error_message=f"Parse error: {str(e)}"
+                    )
             
             # Store results for this CIK
             all_raw_files[current_cik] = downloaded["raw_path"].tolist()
@@ -171,4 +176,10 @@ def get_filings(
     # No return statement needed
 
 __version__ = "0.1.0"
-__all__ = ["get_filings", "SECDownloader", "SECFilingParser", "FilingLogger"]
+__all__ = [
+    "get_filings", 
+    "SECDownloader", 
+    "FilingLogger", 
+    "ParserFactory",
+    "SECFilingParser"  # For backward compatibility
+]

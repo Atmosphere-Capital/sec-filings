@@ -49,6 +49,11 @@ get_filings(
 
 After running this, you will find the parsed data in the `./data_parse` directory.
 
+## Contribution Backlog
+- Parsers for other types of filings.
+- Visualisation tools.
+- Investigate guys! There is probably some underlying network effect happening, derive some market sentiment, ask chat GPT for ideas, code it, ship it!
+
 ## Advanced Usage
 
 ### Using SECDownloader directly
