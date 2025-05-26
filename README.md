@@ -49,15 +49,6 @@ It is provided for educational and research purposes only. Commercial use is not
 | Ignored        | `NPORT-EX`, `NPORT-EX/A`, `NT NPORT-P`, `NT NPORT-EX` | Exhibit-only or notice filings, typically not parsed for holdings.    |
 
 
-## Comparison with WhaleWisdom
-
-| Feature                            | WhaleWisdom                   | PibouFilings                     |
-|------------------------------------|-------------------------------|----------------------------------|
-| Historical Coverage                | Limited to recent years       | Full history since 1999         |
-| Cost                               | $500/year or more             | Free (non-commercial use)        |           |
-| Local Processing / Extensibility   | No                            | Yes (open-source Python)         |
-
-
 ## Installation
 
 ```bash
