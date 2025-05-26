@@ -1,25 +1,62 @@
 # PibouFilings
 
-A Python library for downloading and parsing SEC EDGAR filings, with a focus on 13F filings.
+A Python library to download, parse, and analyze SEC EDGAR filings—especially 13F and N-PORT filings—at scale.
 
 [![PyPI version](https://badge.fury.io/py/piboufilings.svg)](https://badge.fury.io/py/piboufilings)
 [![License: Non-Commercial](https://img.shields.io/badge/License-Non_Commercial-blue.svg)](LICENSE)
+[![Build Status](https://github.com/pibou/piboufilings/actions/workflows/python-package.yml/badge.svg)](https://github.com/pibou/piboufilings/actions/workflows/python-package.yml)
+
 
 ## Disclaimer
 
-**This is an open-source project and is not affiliated with, endorsed by, or connected to the U.S. Securities and Exchange Commission (SEC) or EDGAR system.**
+**This is an open-source project, not affiliated with the U.S. Securities and Exchange Commission (SEC) or EDGAR.**
 
-This library is provided for educational and research purposes only. Commercial use of this library is not authorized. Please refer to the [SEC's Fair Access rules](https://www.sec.gov/edgar/sec-api-documentation) for information about accessing SEC data for commercial purposes.
+It is provided for educational and research purposes only. Commercial use is not permitted under the license terms. Refer to the [SEC Fair Access guidelines](https://www.sec.gov/edgar/sec-api-documentation) for more details. Always ensure your usage complies with these guidelines, especially regarding the User-Agent string.
 
-## Features
 
-- Download SEC EDGAR filings with rate limiting and retry logic
-- Parse company information from filings
-- Extract holdings data from 13F filings
-- Handle XML and text-based filing formats
-- Efficient data processing with pandas
-- Comprehensive logging and error handling
-- Support for amended filings
+
+## Key Features
+
+-   **Automated Downloads:** Fetch 13F and N-PORT filings by CIK, date range, or retrieve all available.
+-   **Smart Parsing:**
+    -   `Form13FParser`: Extracts detailed holdings and cover page data from 13F-HR filings.
+    -   `FormNPORTParser`: Parses comprehensive fund/filer information and security holdings from N-PORT-P filings.
+-   **Structured CSV Output:**
+    -   `13f_info.csv`: Filer information and summary for 13F forms.
+    -   `13f_holdings.csv`: Aggregated holdings data from all processed 13F forms.
+    -   `nport_filing_info.csv`: Fund/filer information and summaries for N-PORT forms.
+    -   `nport_holdings.csv`: Aggregated holdings data from all processed N-PORT forms.
+-   **Robust EDGAR Interaction:**
+    -   Adheres to SEC rate limits (10 req/sec) via a configurable global token bucket rate limiter.
+    -   Comprehensive retry mechanism for network requests (handles connection errors, read errors, and specific HTTP status codes like 429, 5xx).
+-   **Efficient & Configurable:**
+    -   Parallelized downloads using `ThreadPoolExecutor` for faster processing of CIKs with multiple filings.
+    -   Option to `keep_raw_files` (default True) or delete them after processing.
+    -   Customizable directories for data and logs.
+-   **Detailed Logging:**
+    -   Records operations to a daily CSV log file (e.g., `logs/filing_operations_YYYYMMDD.csv`).
+    -   Logs include timestamps, descriptive `operation_type` (e.g., `DOWNLOAD_SINGLE_FILING_SUCCESS`), CIK, accession number, success/failure status, error messages, and specific `error_code` (like HTTP status codes) where applicable.
+-   **Data Analytics Ready:** Pandas DataFrames are used internally and for the final CSV outputs.
+-   **Handles Amendments:** Automatically processes and correctly identifies amended filings (e.g., `13F-HR/A`, `NPORT-P/A`).
+
+
+## Supported Form Types
+
+| Category       | Supported Forms                               | Notes                                                                 |
+|----------------|-----------------------------------------------|-----------------------------------------------------------------------|
+| 13F Filings    | `13F-HR`, `13F-HR/A`                          | Institutional Investment Manager holdings reports.                    |
+| N-PORT Filings | `NPORT-P`, `NPORT-P/A`                        | Monthly portfolio holdings for registered investment companies (funds). |
+| Ignored        | `NPORT-EX`, `NPORT-EX/A`, `NT NPORT-P`, `NT NPORT-EX` | Exhibit-only or notice filings, typically not parsed for holdings.    |
+
+
+## Comparison with WhaleWisdom
+
+| Feature                            | WhaleWisdom                   | PibouFilings                     |
+|------------------------------------|-------------------------------|----------------------------------|
+| Historical Coverage                | Limited to recent years       | Full history since 1999         |
+| Cost                               | $500/year or more             | Free (non-commercial use)        |           |
+| Local Processing / Extensibility   | No                            | Yes (open-source Python)         |
+
 
 ## Installation
 
@@ -29,184 +66,114 @@ pip install piboufilings
 
 ## Quick Start
 
-The simplest way to use piboufilings is with the high-level `get_filings()` function:
+The primary way to use `piboufilings` is with the `get_filings()` function:
 
 ```python
 from piboufilings import get_filings
 
-# Replace with your email to comply with SEC Fair Access requirements
-user_email = "your_email@example.com"
+# Remember to replace with your actual email for the User-Agent
+USER_AGENT_EMAIL = "yourname@example.com"
 
-# Get all 13F-HR filings for a specific CIK
 get_filings(
-    cik="0001067983",  # Berkshire Hathaway
-    form_type="13F-HR",
+    user_agent=USER_AGENT_EMAIL,
+    cik="0001067983",              # Example: Berkshire Hathaway CIK
+    form_type=["13F-HR", "NPORT-P"], # Can be a string or list of strings
     start_year=2023,
     end_year=2023,
-    user_agent=user_email
+    base_dir="./my_sec_data",       # Optional: Custom directory for parsed CSVs
+    log_dir="./my_sec_logs",        # Optional: Custom directory for logs
+    keep_raw_files=True            # Optional: Set to False to delete raw .txt files after parsing
 )
 ```
 
-After running this, you will find the parsed data in the `./data_parse` directory.
-
-## Contribution Backlog
-- Parsers for other types of filings.
-- Visualisation tools.
-- Investigate guys! There is probably some underlying network effect happening, derive some market sentiment, ask chat GPT for ideas, code it, ship it!
-
-## Advanced Usage
-
-### Using SECDownloader directly
-
-```python
-from piboufilings import SECDownloader
-
-# Initialize with your email
-downloader = SECDownloader(user_agent="your_email@example.com")
-
-# Get index data for a specific year range
-index_data = downloader.get_sec_index_data(start_year=2020, end_year=2023)
-
-# Filter for specific CIK and form type
-filtered_data = index_data[
-    (index_data["CIK"] == "0000320193") &  # Apple Inc.
-    (index_data["Form Type"] == "13F-HR")
-]
-
-# Download the filtered filings
-for _, filing in filtered_data.iterrows():
-    cik = filing["CIK"]
-    accession_number = filing["accession_number"]
-    form_type = filing["Form Type"]
-    downloader._download_single_filing(cik, accession_number, form_type)
-```
-
-### Using SECFilingParser for custom parsing
-
-```python
-from piboufilings import SECFilingParser
-
-# Initialize the parser
-parser = SECFilingParser()
-
-# Read a previously downloaded filing
-with open("./data_RAW/raw/0001067983/13F-HR/0001067983_13F-HR_0000950123-23-003772.txt", "r", encoding="utf-8") as f:
-    filing_content = f.read()
-
-# Parse company information
-company_info_df = parser.parse_company_info(filing_content)
-
-# Parse accession information
-accession_info_df = parser.parse_accession_info(filing_content)
-
-# Extract XML data
-xml_data, accession_number, conformed_date = parser.extract_xml(filing_content)
-
-# Parse holdings information
-if xml_data:
-    holdings_df = parser.parse_holdings(xml_data, accession_number, conformed_date)
-    print(f"Found {len(holdings_df)} holdings")
-```
-
-### Working with amended filings
-
-The library automatically detects amended filings (e.g., "13F-HR/A") and organizes them separately:
-
-```python
-from piboufilings import get_filings
-
-# Get both original and amended filings
-get_filings(
-    cik="0001067983",
-    form_type="13F-HR",  # Will also catch "13F-HR/A" filings
-    start_year=2023,
-    user_agent="your_email@example.com"
-)
-
-# To specifically target only amended filings
-get_filings(
-    cik="0001067983",
-    form_type="13F-HR/A",
-    start_year=2023,
-    user_agent="your_email@example.com"
-)
-```
+After running, parsed data will be in `./my_sec_data` (or `./data_parsed` by default) and logs in `./my_sec_logs` (or `./logs` by default). Raw downloaded files (if kept) are stored in a separate `data_raw` directory (by default relative to the project root if `piboufilings` is run as a local script, or in a `data_raw` subdir of your current working dir if installed as a library and `DATA_DIR` setting is not customized).
 
 ## Data Organization
 
-After processing filings, the data is organized as follows:
+### Parsed Data
+By default, parsed CSV files are saved in a directory named `data_parsed` within your current working directory (or as specified by `base_dir` in `get_filings`):
 
-- `./data_parse/company_info.csv` - Basic information about companies
-- `./data_parse/accession_info.csv` - Filing metadata
-- `./data_parse/holdings/{CIK}/{ACCESSION_NUMBER}.csv` - Parsed holdings data
+-   `./data_parsed/13f_info.csv`: Contains filer information and report summaries from all processed 13F filings.
+-   `./data_parsed/13f_holdings.csv`: Contains all individual holdings from all processed 13F filings, appended together.
+-   `./data_parsed/nport_filing_info.csv`: Contains fund/filer information and report summaries from all processed N-PORT filings.
+-   `./data_parsed/nport_holdings.csv`: Contains all individual holdings from all processed N-PORT filings, appended together.
 
-Raw filings are stored in:
+### Raw Data
+Raw `.txt` filings (if `keep_raw_files=True`) are stored based on the `DATA_DIR` setting in `piboufilings.config.settings`. By default, this resolves to a `data_raw` directory relative to the project's root when running from source, or a `data_raw` subdirectory from where your script using the library is executed. The structure within is:
 
-- `./data_RAW/raw/{CIK}/{FORM_TYPE}/{CIK}_{FORM_TYPE}_{ACCESSION_NUMBER}.txt`
-- Amended filings: `./data_RAW/raw/{CIK}/{FORM_TYPE}/A/{CIK}_{FORM_TYPE}_{ACCESSION_NUMBER}.txt`
+-   `.../data_raw/raw/{CIK}/{FORM_TYPE_BASE}/{FILENAME}.txt`
+-   Example for an amended filing: `.../data_raw/raw/{CIK}/{FORM_TYPE_BASE}/A/{FILENAME}.txt`
+    *(Note: `{FORM_TYPE_BASE}` is the form type without `/A`, e.g., "13F-HR")*
 
-## Working with the Parsed Data
 
-```python
-import pandas as pd
+## Advanced Usage & Components
 
-# Load company information
-company_info = pd.read_csv("./data_parse/company_info.csv")
+While `get_filings()` is the main interface, the library's components can be used individually if needed:
 
-# Load accession information
-accession_info = pd.read_csv("./data_parse/accession_info.csv")
+-   **`SECDownloader` (`piboufilings.core.downloader`):** Handles fetching index files and individual filings, incorporating rate limiting and retries.
+    ```python
+    from piboufilings import SECDownloader
+    downloader = SECDownloader(user_agent="yourname@example.com")
+    index_data = downloader.get_sec_index_data(start_year=2023, end_year=2023)
+    #filing_content_info = downloader._download_single_filing(cik="...", accession_number="...", form_type="...")
+    ```
+-   **Form-Specific Parsers (`piboufilings.parsers`):**
+    -   `Form13FParser`: For 13F-HR filings.
+    -   `FormNPORTParser`: For N-PORT-P filings.
+    ```python
+    from piboufilings.parsers import Form13FParser # or FormNPORTParser
+    parser = Form13FParser(output_dir="./my_parsed_data") # output_dir is where CSVs are saved
+    with open("path/to/raw_13f_filing.txt", 'r') as f:
+        content = f.read()
+    parsed_data_dict = parser.parse_filing(content) # Returns {'filing_info': DataFrame, 'holdings': DataFrame}
+    parser.save_parsed_data(parsed_data_dict, accession_number="...", cik="...")
+    ```
+-   **`FilingLogger` (`piboufilings.core.logger`):** Manages CSV logging.
+    ```python
+    from piboufilings import FilingLogger
+    logger = FilingLogger(log_dir="./my_custom_logs")
+    logs_df = logger.get_logs()
+    cik_logs_df = logger.get_logs_by_cik("0001067983")
+    ```
 
-# Load holdings for a specific filing
-cik = "0001067983"
-accession_number = "0000950123-23-003772"
-holdings = pd.read_csv(f"./data_parse/holdings/{cik}/{accession_number}.csv")
+## Logging Details
 
-# Analyze the data
-print(f"Total value of holdings: ${holdings['SHARE_VALUE'].sum():,}")
-print(f"Number of unique securities: {holdings['NAME_OF_ISSUER'].nunique()}")
+Operations are logged to `./logs/filing_operations_{YYYYMMDD}.csv` (or your custom `log_dir`).
+Key columns include:
+-   `timestamp`: Time of the log entry.
+-   `operation_type`: Descriptive type of operation (e.g., `DOWNLOAD_SINGLE_FILING_SUCCESS`, `INDEX_FETCH_HTTP_ERROR`, `PROCESS_FILINGS_FOR_CIK_START`).
+-   `cik`: CIK involved (or "SYSTEM").
+-   `form_type_processed`: Form type context for the log.
+-   `accession_number`: Accession number if applicable.
+-   `download_success`: Boolean.
+-   `download_error_message`: Detailed error or informational message.
+-   `parse_success`: Boolean.
+-   `error_code`: Specific error code, like HTTP status codes (e.g., 404, 429).
 
-# Top 5 holdings by value
-top_holdings = holdings.groupby('NAME_OF_ISSUER')['SHARE_VALUE'].sum().sort_values(ascending=False).head(5)
-print("Top 5 holdings:")
-print(top_holdings)
-```
 
-## Logging
-
-Operations are logged to `./logs/filing_operations_{date}.csv`. You can analyze these logs with:
-
-```python
-from piboufilings import FilingLogger
-
-# Initialize the logger
-logger = FilingLogger()
-
-# Get all logs
-logs = logger.get_logs()
-
-# Get logs for a specific CIK
-cik_logs = logger.get_logs_by_cik("0001067983")
-
-# Display success rate
-success_rate = logs["download_success"].value_counts(normalize=True)
-print(f"Download success rate: {success_rate.get('True', 0):.2%}")
-```
+## Roadmap / Future Enhancements
+-   Support for additional SEC form types (e.g., 10-K, 10-Q, 8-K, Form 4).
+-   More granular parsing for specific sections within N-PORT filings (e.g., derivatives, liquidity classifications).
+-   Enhanced data validation and cleaning steps.
+-   Option for different output formats (e.g., Parquet, database).
+-   Tutorials and more detailed examples in a documentation site.
 
 ## License
 
-This project is licensed under the Non-Commercial License - see the [LICENSE](LICENSE) file for details. Commercial use of this library is not authorized.
+This project is licensed under a Non-Commercial License. Please see the [LICENSE](LICENSE) file for details. Commercial use of this library is not authorized without explicit permission.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! If you'd like to contribute, please feel free to fork the repository, make your changes, and submit a Pull Request.
+Consider a few areas:
+1.  **New Parsers:** Implementing parsers for other form types.
+2.  **Feature Enhancements:** Adding capabilities from the roadmap or new ideas.
+3.  **Bug Fixes & Performance Improvements.**
+4.  **Documentation & Examples.**
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+When contributing, please ensure your code is well-tested and follows the general structure of the library.
 
 ## Acknowledgments
 
-- SEC EDGAR for providing the filing data
-- The Python community for the excellent tools that made this possible
+-   The U.S. Securities and Exchange Commission (SEC) for providing public access to EDGAR filing data.
+-   The Python community and the developers of libraries like `requests`, `pandas`, and `tqdm`.

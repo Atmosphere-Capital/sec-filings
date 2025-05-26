@@ -7,7 +7,7 @@ from pathlib import Path
 
 # Base paths
 BASE_DIR = Path(__file__).parent.parent.parent
-DATA_DIR = BASE_DIR / "Data_RAW"
+DATA_DIR = BASE_DIR / "data_raw"
 LOGS_DIR = BASE_DIR / "logs"
 
 # SEC API settings
@@ -18,7 +18,7 @@ REQUEST_DELAY = 1 / SAFE_REQ_PER_SEC
 
 # HTTP settings
 DEFAULT_HEADERS = {
-    "User-Agent": "piboufilings/0.1.0 (your_email@example.com)"
+    "User-Agent": "piboufilings/0.1.0 (thisisgeorgeemail@gmail.com)"
 }
 
 # Retry settings

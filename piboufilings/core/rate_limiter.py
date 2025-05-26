@@ -55,54 +55,49 @@ class TokenBucketRateLimiter:
         start_time = time.time()
         
         with self.lock:
-            self._refill()
-            
-            # If we have enough tokens, take them and return True
-            if self.tokens >= tokens:
-                self.tokens -= tokens
-                return True
-                
-            # If not blocking, return False immediately
-            if not block:
-                return False
-                
-            # Calculate how long we need to wait to get enough tokens
-            deficit = tokens - self.tokens
-            wait_time = deficit / self.rate
-            
-            # If timeout is specified and wait time exceeds it, return False
-            if timeout is not None and wait_time > timeout:
-                return False
-                
-            # If we've already waited too long, return False
-            if timeout is not None and time.time() - start_time >= timeout:
-                return False
-                
-            # Wait for the required time
-            if wait_time > 0:
-                if timeout is not None:
-                    # Adjust wait time to respect the timeout
-                    remaining_timeout = timeout - (time.time() - start_time)
-                    wait_time = min(wait_time, remaining_timeout)
-                    if wait_time <= 0:
-                        return False
-                
-                time.sleep(wait_time)
-                
-                # Refill the bucket again after waiting
+            while True:
                 self._refill()
                 
-                # Check if we now have enough tokens
                 if self.tokens >= tokens:
                     self.tokens -= tokens
                     return True
-                else:
-                    # Something went wrong with our calculations
-                    return False
-            
-            # Take the tokens and return True
-            self.tokens -= tokens
-            return True
+                
+                if not block:
+                    return False # Not enough tokens and not blocking
+                
+                # Blocking mode: calculate wait time and sleep
+                deficit = tokens - self.tokens # Deficit should be > 0 here
+                
+                if self.rate <= 0: # Cannot acquire if rate is zero or negative
+                    return False 
+                    
+                required_wait_time = deficit / self.rate
+                
+                if timeout is not None:
+                    elapsed_time = time.time() - start_time
+                    remaining_timeout = timeout - elapsed_time
+                    if remaining_timeout <= 0: # Timeout expired
+                        return False
+                    if required_wait_time > remaining_timeout:
+                        # Not enough time left in timeout to wait for the needed tokens,
+                        # so sleep for the remaining_timeout and then re-check (will likely fail if still deficit).
+                        # Or, we could return False directly here, but sleeping for remaining_timeout
+                        # gives a chance if tokens are added by a very small amount in that window.
+                        # For simplicity and to ensure timeout is respected strictly for *this* attempt to acquire:
+                        return False # Cannot wait long enough
+                
+                # Determine actual sleep time
+                sleep_duration = required_wait_time
+                if timeout is not None:
+                    sleep_duration = min(required_wait_time, remaining_timeout) # Ensure we don't sleep past timeout
+
+                if sleep_duration > 0: # Only sleep if there's a positive duration
+                    time.sleep(sleep_duration)
+                
+                # After sleep (or if no sleep was needed but still in loop due to timeout logic),
+                # the loop will continue, _refill, and check tokens again.
+                # If timeout occurred and we returned False, loop is exited.
+                # If timeout is None, loop continues until tokens are acquired.
 
 
 class GlobalRateLimiter:

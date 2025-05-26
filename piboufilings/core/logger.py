@@ -29,20 +29,26 @@ class FilingLogger:
                 writer = csv.writer(f)
                 writer.writerow([
                     "timestamp", 
+                    "operation_type",
                     "cik", 
+                    "form_type_processed",
                     "accession_number", 
                     "download_success", 
                     "download_error_message", 
-                    "parse_success"
+                    "parse_success",
+                    "error_code"
                 ])
     
     def log_operation(
         self, 
+        operation_type: Optional[str] = "",
         cik: Optional[str] = None, 
+        form_type_processed: Optional[str] = None,
         accession_number: Optional[str] = None, 
         download_success: bool = False, 
         download_error_message: Optional[str] = None, 
-        parse_success: Optional[bool] = None
+        parse_success: Optional[bool] = None,
+        error_code: Optional[Any] = None
     ) -> None:
         """
         Log a filing operation to the CSV file.
@@ -60,11 +66,14 @@ class FilingLogger:
             writer = csv.writer(f)
             writer.writerow([
                 timestamp,
+                operation_type,
                 cik or "SYSTEM",
+                form_type_processed or "",
                 accession_number or "",
                 "True" if download_success else "False",
                 download_error_message or "",
-                "True" if parse_success else "False" if parse_success is not None else ""
+                "True" if parse_success else "False" if parse_success is not None else "",
+                str(error_code) if error_code is not None else ""
             ])
     
     def get_logs(self) -> pd.DataFrame:
@@ -77,11 +86,14 @@ class FilingLogger:
         if not self.log_file.exists():
             return pd.DataFrame(columns=[
                 "timestamp", 
+                "operation_type",
                 "cik", 
+                "form_type_processed",
                 "accession_number", 
                 "download_success", 
                 "download_error_message", 
-                "parse_success"
+                "parse_success",
+                "error_code"
             ])
         
         return pd.read_csv(self.log_file)

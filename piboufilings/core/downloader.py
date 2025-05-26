@@ -12,6 +12,7 @@ from urllib3.util.retry import Retry
 from tqdm import tqdm
 import re
 import time
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..config.settings import (
@@ -64,7 +65,8 @@ class SECDownloader:
         start_year: int,
         end_year: Optional[int] = None,
         save_raw: bool = True,
-        show_progress: bool = True
+        show_progress: bool = True,
+        index_data_subset: Optional[pd.DataFrame] = None
     ) -> pd.DataFrame:
         """
         Download all filings of a specific type for a company within a date range.
@@ -76,6 +78,8 @@ class SECDownloader:
             end_year: Ending year (defaults to current year)
             save_raw: Whether to save raw filing data (defaults to True)
             show_progress: Whether to show progress bars (defaults to True)
+            index_data_subset: Optional pre-filtered DataFrame of index entries for this specific CIK and form type.
+                               If provided, skips fetching and filtering the main index.
             
         Returns:
             pd.DataFrame: DataFrame containing information about downloaded filings
@@ -84,108 +88,138 @@ class SECDownloader:
             # Normalize CIK
             cik = str(cik).zfill(10)
             
-            # Get index data
-            index_data = self.get_sec_index_data(start_year, end_year)
+            company_filings: pd.DataFrame
             
-            # Filter for the specific company and form type
-            if not index_data.empty:
+            if index_data_subset is not None and not index_data_subset.empty:
+                # Use the provided subset directly
+                company_filings = index_data_subset
+                # Ensure the subset is indeed for the given CIK and form_type as a safeguard, though
+                # the caller should ideally ensure this.
+                # This filtering on the subset is a light check.
+                company_filings = company_filings[
+                    (company_filings["CIK"] == cik) &
+                    (company_filings["Form Type"].str.contains(form_type, na=False))
+                ]
+                if company_filings.empty:
+                    self.logger.log_operation(
+                        cik=cik,
+                        operation_type="SUBSET_VALIDATION_ERROR",
+                        download_success=False,
+                        download_error_message=f"Provided index_data_subset for {form_type} and {cik} resulted in no filings after re-check."
+                    )
+                    return pd.DataFrame()
+
+            else:
+                # Fetch index data if subset is not provided or is empty
+                index_data = self.get_sec_index_data(start_year, end_year)
+                
+                if index_data.empty:
+                    self.logger.log_operation(
+                        cik=cik,
+                        operation_type="INDEX_FETCH_NO_RESULTS_FOR_DOWNLOAD",
+                        download_success=False,
+                        download_error_message=f"Failed to get index data for years {start_year}-{end_year} (when attempting to download for CIK {cik}, form {form_type})"
+                    )
+                    return pd.DataFrame()
+
+                # Filter for the specific company and form type
                 company_filings = index_data[
                     (index_data["CIK"] == cik) & 
                     (index_data["Form Type"].str.contains(form_type, na=False))
                 ]
-                
-                if company_filings.empty:
-                    self.logger.log_operation(
-                        cik=cik,
-                        download_success=False,
-                        download_error_message=f"No {form_type} filings found for {cik} between {start_year}-{end_year}"
-                    )
-                    return pd.DataFrame()
-                
-                # Download filings in parallel
-                downloaded_filings = []
-                
-                # Create a progress bar for the user
-                pbar = None
-                if show_progress:
-                    pbar = tqdm(
-                        total=len(company_filings),
-                        desc=f"Downloading filings for CIK {cik}"
-                    )
-                
-                # Define function to download a single filing
-                def download_single_filing_wrapper(filing):
-                    try:
-                        # Extract accession number from Filename
-                        accession_match = re.search(r'edgar/data/\d+/([0-9\-]+)\.txt', filing["Filename"])
-                        if not accession_match:
-                            self.logger.log_operation(
-                                cik=cik,
-                                download_success=False,
-                                download_error_message=f"Invalid filename format: {filing['Filename']}"
-                            )
-                            return None
-                            
-                        accession_number = accession_match.group(1)
-                        
-                        # Download the filing
-                        filing_info = self._download_single_filing(
-                            cik=cik,
-                            accession_number=accession_number,
-                            form_type=form_type,
-                            save_raw=save_raw
-                        )
-                        
-                        # Update progress bar
-                        if pbar:
-                            pbar.update(1)
-                            
-                        return filing_info
-                    except Exception as e:
-                        # Log the error but don't propagate it to allow other downloads to continue
-                        self.logger.log_operation(
-                            cik=cik,
-                            download_success=False,
-                            download_error_message=f"Error downloading filing: {str(e)}"
-                        )
-                        if pbar:
-                            pbar.update(1)
-                        return None
-                
-                # Use ThreadPoolExecutor to download filings in parallel
-                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                    # Submit all download tasks
-                    future_to_filing = {
-                        executor.submit(download_single_filing_wrapper, filing): filing 
-                        for _, filing in company_filings.iterrows()
-                    }
-                    
-                    # Process completed downloads
-                    for future in as_completed(future_to_filing):
-                        filing_info = future.result()
-                        if filing_info:
-                            downloaded_filings.append(filing_info)
-                
-                # Close progress bar
-                if pbar:
-                    pbar.close()
-                
+            
+            if company_filings.empty:
                 self.logger.log_operation(
                     cik=cik,
-                    download_success=True,
-                    download_error_message=f"Successfully downloaded {len(downloaded_filings)} filings"
-                )
-                return pd.DataFrame(downloaded_filings)
-            else:
-                self.logger.log_operation(
-                    cik=cik,
+                    operation_type="NO_FILINGS_FOUND_FOR_CIK_FORM_IN_INDEX",
                     download_success=False,
-                    download_error_message=f"Failed to get index data for years {start_year}-{end_year}"
+                    download_error_message=f"No {form_type} filings found for {cik} (date range {start_year}-{end_year or 'current year'})"
                 )
                 return pd.DataFrame()
+            
+            # Download filings in parallel
+            downloaded_filings_info = [] # Renamed to avoid conflict
+            
+            # Create a progress bar for the user
+            pbar = None
+            if show_progress:
+                pbar = tqdm(
+                    total=len(company_filings),
+                    desc=f"Downloading filings for CIK {cik}"
+                )
+            
+            # Define function to download a single filing
+            def download_single_filing_wrapper(filing):
+                try:
+                    # Extract accession number from Filename
+                    accession_match = re.search(r'edgar/data/\d+/([0-9\-]+)\.txt', filing["Filename"])
+                    if not accession_match:
+                        self.logger.log_operation(
+                            cik=cik,
+                            operation_type="FILENAME_PARSE_ERROR_IN_WRAPPER",
+                            download_success=False,
+                            download_error_message=f"Invalid filename format: {filing['Filename']}"
+                        )
+                        return None
+                            
+                    accession_number = accession_match.group(1)
+                    
+                    # Download the filing
+                    filing_info = self._download_single_filing(
+                        cik=cik,
+                        accession_number=accession_number,
+                        form_type=form_type,
+                        save_raw=save_raw
+                    )
+                    
+                    # Update progress bar
+                    if pbar:
+                        pbar.update(1)
+                        
+                    return filing_info
+                except Exception as e:
+                    # Log the error but don't propagate it to allow other downloads to continue
+                    self.logger.log_operation(
+                        cik=cik,
+                        operation_type="DOWNLOAD_FILING_WRAPPER_GENERAL_ERROR",
+                        download_success=False,
+                        download_error_message=f"Error downloading filing: {str(e)}"
+                    )
+                    if pbar:
+                        pbar.update(1)
+                    return None
+            
+            # Use ThreadPoolExecutor to download filings in parallel
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                # Submit all download tasks
+                future_to_filing = {
+                    executor.submit(download_single_filing_wrapper, filing_row): filing_row # Pass the row (Series)
+                    for _, filing_row in company_filings.iterrows() # Iterate over rows
+                }
+                
+                # Process completed downloads
+                for future in as_completed(future_to_filing):
+                    filing_info_result = future.result() # Renamed
+                    if filing_info_result:
+                        downloaded_filings_info.append(filing_info_result)
+            
+            # Close progress bar
+            if pbar:
+                pbar.close()
+            
+            self.logger.log_operation(
+                cik=cik,
+                operation_type="DOWNLOAD_FILINGS_BATCH_PROCESSED",
+                download_success=True,
+                download_error_message=f"Successfully processed {len(downloaded_filings_info)} filings for download",
+                error_code=200
+            )
+            return pd.DataFrame(downloaded_filings_info) # Use the collected list
+
         except Exception as e:
             self.logger.log_operation(
                 cik=cik,
+                operation_type="DOWNLOAD_FILINGS_UNHANDLED_EXCEPTION",
                 download_success=False,
                 download_error_message=f"Error downloading filings: {str(e)}"
             )
@@ -226,13 +260,17 @@ class SECDownloader:
             
             # Download the filing
             response = self.session.get(url, headers=self.headers)
+            # Log the request details regardless of success/failure
+            # self.logger.log_operation( ... ) # Consider adding a generic request log here if needed
             
             if response.status_code != 200:
                 self.logger.log_operation(
                     cik=cik,
                     accession_number=accession_number,
+                    operation_type="DOWNLOAD_SINGLE_FILING_HTTP_ERROR",
                     download_success=False,
-                    download_error_message=f"HTTP error {response.status_code}: {response.reason}"
+                    download_error_message=f"HTTP error {response.status_code} for {url}",
+                    error_code=response.status_code
                 )
                 return None
             
@@ -250,6 +288,7 @@ class SECDownloader:
                     self.logger.log_operation(
                         cik=cik,
                         accession_number=accession_number,
+                        operation_type="SAVE_RAW_FILING_IO_ERROR",
                         download_success=True,
                         parse_success=False,
                         download_error_message=f"Failed to save raw filing: {str(e)}"
@@ -258,6 +297,7 @@ class SECDownloader:
             self.logger.log_operation(
                 cik=cik,
                 accession_number=accession_number,
+                operation_type="DOWNLOAD_SINGLE_FILING_SUCCESS",
                 download_success=True
             )
             
@@ -270,17 +310,23 @@ class SECDownloader:
                 "url": url
             }
         except requests.RequestException as e:
+            status_code = None
+            if hasattr(e, 'response') and e.response is not None:
+                status_code = e.response.status_code
             self.logger.log_operation(
                 cik=cik,
                 accession_number=accession_number,
+                operation_type="DOWNLOAD_SINGLE_FILING_REQUEST_EXCEPTION",
                 download_success=False,
-                download_error_message=f"Request error: {str(e)}"
+                download_error_message=f"Request error: {str(e)}",
+                error_code=status_code # Log status_code if available from exception
             )
             return None
         except Exception as e:
             self.logger.log_operation(
                 cik=cik,
                 accession_number=accession_number,
+                operation_type="DOWNLOAD_SINGLE_FILING_UNEXPECTED_ERROR",
                 download_success=False,
                 download_error_message=f"Unexpected error: {str(e)}"
             )
@@ -315,6 +361,10 @@ class SECDownloader:
         # Create directory structure
         cik_dir = os.path.join(DATA_DIR, "raw", cik)
         
+        #Check if this is an exhibit filing
+        is_exhibit = "EX" in form_type
+        if is_exhibit:
+            return np.nan
         # Check if this is an amendment filing
         is_amendment = form_type.endswith("/A") or "/A" in form_type
         
@@ -375,6 +425,7 @@ class SECDownloader:
                         
             if not all_reports:
                 self.logger.log_operation(
+                    operation_type="INDEX_FETCH_NO_REPORTS_FOUND",
                     download_success=False,
                     download_error_message=f"No index data found for years {start_year}-{end_year}"
                 )
@@ -397,6 +448,7 @@ class SECDownloader:
             df_all['CIK'] = df_all['CIK_extracted'].str.zfill(10)
             
             self.logger.log_operation(
+                operation_type="INDEX_FETCH_SUCCESS",
                 download_success=True,
                 download_error_message=f"Retrieved index data with {len(df_all)} entries"
             )
@@ -404,6 +456,7 @@ class SECDownloader:
             return df_all[['CIK', 'Name', 'Date Filed', 'Form Type', 'accession_number', 'Filename']]
         except Exception as e:
             self.logger.log_operation(
+                operation_type="INDEX_FETCH_UNHANDLED_EXCEPTION",
                 download_success=False,
                 download_error_message=f"Error retrieving index data: {str(e)}"
             )
@@ -433,8 +486,10 @@ class SECDownloader:
             
             if response.status_code != 200:
                 self.logger.log_operation(
+                    operation_type="INDEX_FETCH_PARTIAL_HTTP_ERROR",
                     download_success=False,
-                    download_error_message=f"Failed to retrieve index for {year} Q{quarter}: HTTP {response.status_code}"
+                    download_error_message=f"Failed to retrieve index for {year} Q{quarter}: HTTP {response.status_code}",
+                    error_code=response.status_code
                 )
                 return pd.DataFrame()
                 
@@ -443,6 +498,7 @@ class SECDownloader:
                 start_idx = next(i for i, line in enumerate(lines) if set(line.strip()) == {'-'})
             except StopIteration:
                 self.logger.log_operation(
+                    operation_type="INDEX_PARSE_UNEXPECTED_FORMAT_ERROR",
                     download_success=False,
                     download_error_message=f"Unexpected format in index file for {year} Q{quarter}"
                 )
@@ -468,18 +524,21 @@ class SECDownloader:
                     
             if not entries:
                 self.logger.log_operation(
+                    operation_type="INDEX_PARSE_NO_VALID_ENTRIES_FOUND",
                     download_success=False,
                     download_error_message=f"No valid entries found in index for {year} Q{quarter}"
                 )
                 return pd.DataFrame()
                 
             self.logger.log_operation(
+                operation_type="INDEX_PARSE_SUCCESS",
                 download_success=True,
                 download_error_message=f"Successfully parsed {len(entries)} entries from {year} Q{quarter}"
             )
             return pd.DataFrame(entries)
         except Exception as e:
             self.logger.log_operation(
+                operation_type="INDEX_PARSE_UNHANDLED_EXCEPTION",
                 download_success=False,
                 download_error_message=f"Error parsing index for {year} Q{quarter}: {str(e)}"
             )
@@ -490,6 +549,8 @@ class SECDownloader:
         session = requests.Session()
         retry_strategy = Retry(
             total=MAX_RETRIES,
+            connect=MAX_RETRIES,  # Retry on connection errors
+            read=MAX_RETRIES,     # Retry on read errors (like IncompleteRead)
             backoff_factor=BACKOFF_FACTOR,
             status_forcelist=RETRY_STATUS_CODES,
             allowed_methods=["GET"]
