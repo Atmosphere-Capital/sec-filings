@@ -20,6 +20,7 @@ from .parsers.parser_utils import get_parser_for_form_type, validate_filing_cont
 from .config.settings import DATA_DIR
 
 
+### IF YOU'RE BUILDING A NEW PARSER, YOU'LL NEED TO UPDATE THIS FUNCTION ###
 def get_parser_for_form_type_internal(form_type: str, base_dir: str):
     """Get the appropriate parser for a form type using the new restructured parsers."""
     if "EX" in form_type:
@@ -528,7 +529,7 @@ def get_filings(
         download_error_message=f"Finished get_filings. CIKs: {cik}, Forms: {form_type}, Years: {start_year}-{end_year}"
     )
 
-__version__ = "0.1.1" # Incremented version due to new feature
+__version__ = "0.2" # Incremented version due to new feature
 __all__ = [
     "get_filings", 
     "SECDownloader", 
