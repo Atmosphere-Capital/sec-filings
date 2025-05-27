@@ -235,7 +235,7 @@ def get_filings(
     log_dir: str = "./logs",
     show_progress: bool = True,
     max_workers: int = 5,
-    keep_raw_files: bool = True
+    keep_raw_files: bool = False
 ) -> None:
     """
     Download and parse SEC filings for one or more companies and form types.
@@ -591,7 +591,7 @@ def get_filings(
         download_error_message=f"Finished get_filings. CIKs: {cik}, Forms: {form_type}, Years: {start_year}-{end_year}"
     )
 
-__version__ = "0.2" # Incremented version due to new feature
+__version__ = "0.2.2" # Incremented version due to new feature
 __all__ = [
     "get_filings", 
     "SECDownloader", 
