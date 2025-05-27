@@ -46,11 +46,24 @@ def process_filings_for_cik(current_cik, downloaded, form_type, base_dir, logger
     """
     Process filings for a specific CIK with the restructured parsers.
     """
+    # Determine the identifier to use in log messages (IRS_NUMBER or SEC_FILE_NUMBER if available)
+    identifier_for_log = current_cik # Default to CIK
+    if downloaded is not None and not downloaded.empty:
+        # Attempt to get IRS_NUMBER or SEC_FILE_NUMBER from the first downloaded filing
+        # This assumes these might be present after downloader enrichment or initial parsing
+        # For simplicity, we check the first entry. A more robust way might involve looking across all entries.
+        first_filing_data = downloaded.iloc[0]
+        if pd.notna(first_filing_data.get('IRS_NUMBER')):
+            identifier_for_log = first_filing_data.get('IRS_NUMBER')
+        elif pd.notna(first_filing_data.get('SEC_FILE_NUMBER')):
+            identifier_for_log = first_filing_data.get('SEC_FILE_NUMBER')
+
     logger.log_operation(
-        operation_type="PROCESS_FILINGS_FOR_CIK_START",
-        cik=current_cik,
+        operation_type="PROCESS_FILINGS_FOR_IDENTIFIER_START", # Changed from CIK
+        cik=current_cik, # Keep original CIK for backend logging if needed
+        custom_identifier=identifier_for_log, # Add the new identifier
         form_type_processed=form_type,
-        download_error_message=f"Starting processing for CIK {current_cik}, Form {form_type}. Downloaded count: {len(downloaded) if downloaded is not None else 0}"
+        download_error_message=f"Starting processing for {identifier_for_log}, Form {form_type}. Downloaded count: {len(downloaded) if downloaded is not None else 0}"
     )
 
     # Get parser for the form type
@@ -87,7 +100,7 @@ def process_filings_for_cik(current_cik, downloaded, form_type, base_dir, logger
     parsed_files = {}
     filing_iterator = tqdm(
         valid_filings.iterrows(),
-        desc=f"Parsing {form_type} filings for CIK {current_cik}",
+        desc=f"Parsing {form_type} filings for {identifier_for_log}", # Changed from CIK
         total=remaining_filings,
         disable=not show_progress
     ) if show_progress else valid_filings.iterrows()
@@ -202,10 +215,11 @@ def process_filings_for_cik(current_cik, downloaded, form_type, base_dir, logger
             )
     
     logger.log_operation(
-        operation_type="PROCESS_FILINGS_FOR_CIK_END",
-        cik=current_cik,
+        operation_type="PROCESS_FILINGS_FOR_IDENTIFIER_END", # Changed from CIK
+        cik=current_cik, # Keep original CIK
+        custom_identifier=identifier_for_log,
         form_type_processed=form_type,
-        download_error_message=f"Finished processing for CIK {current_cik}, Form {form_type}. Successful parses: {successful_parses}, Holdings: {total_holdings_extracted}"
+        download_error_message=f"Finished processing for {identifier_for_log}, Form {form_type}. Successful parses: {successful_parses}, Holdings: {total_holdings_extracted}"
     )
     return downloaded["raw_path"].tolist(), parsed_files, downloaded
 
@@ -390,7 +404,7 @@ def get_filings(
     
         cik_iterator = tqdm(
             ciks_to_process_for_current_form, 
-            desc=f"Processing CIKs for {current_form_str}", 
+            desc=f"Processing firms with {current_form_str} filings", 
             disable=not show_progress
         ) if show_progress else ciks_to_process_for_current_form
     

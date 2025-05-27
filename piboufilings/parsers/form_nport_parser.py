@@ -71,8 +71,8 @@ class FormNPORTParser:
                     
 
                     expected_columns = [
-                        'CUSIP', 'REPORT_DATE', 'SEC_FILE_NUMBER',
-                        'SECURITY_NAME', 'TITLE', 'OTHER_ID', 
+                        'PERIOD_OF_REPORT', 'FILED_DATE', 'SEC_FILE_NUMBER',
+                        'SECURITY_NAME', 'TITLE',
                         'BALANCE', 'UNITS', 'CURRENCY', 'VALUE_USD', 
                         'PCT_VALUE', 'PAYOFF_PROFILE', 'ASSET_CATEGORY', 'ISSUER_CATEGORY', 
                         'COUNTRY', 'IS_RESTRICTED', 'FAIR_VALUE_LEVEL', 'IS_CASH_COLLATERAL', 
@@ -102,11 +102,10 @@ class FormNPORTParser:
                     # Drop CUSIP before saving
                     if 'CUSIP' in df_to_save.columns:
                         df_to_save = df_to_save.drop(columns=['CUSIP'])
-                    # Drop LEI and COUNTERPARTY_LEI before saving
+                    # Drop LEI before saving (general holding LEI)
                     if 'LEI' in df_to_save.columns:
                         df_to_save = df_to_save.drop(columns=['LEI'])
-                    if 'COUNTERPARTY_LEI' in df_to_save.columns:
-                        df_to_save = df_to_save.drop(columns=['COUNTERPARTY_LEI'])
+                    # COUNTERPARTY_LEI is already removed from parsing and expected_columns
                         
                     if filepath.exists():
                         df_to_save.to_csv(filepath, mode='a', header=False, index=False)
@@ -399,14 +398,17 @@ class FormNPORTParser:
             }
             
             holdings = []
-            report_date = filing_info_df['REPORT_DATE'].iloc[0] if not filing_info_df.empty else None
+            # Retrieve FILED_DATE and use REPORT_DATE as PERIOD_OF_REPORT for holdings
+            filed_date_val = filing_info_df['FILED_DATE'].iloc[0] if not filing_info_df.empty and 'FILED_DATE' in filing_info_df.columns else None
+            period_of_report_val = filing_info_df['REPORT_DATE'].iloc[0] if not filing_info_df.empty and 'REPORT_DATE' in filing_info_df.columns else None
             
             # Parse each investment/security - ONLY security-specific data
             for inv in root.findall('.//nport:invstOrSec', namespaces):
                 holding = {
                     # Link to filing info - matching exact schema
                     'HOLDING_ID': None,  # Will be auto-generated in database
-                    'REPORT_DATE': report_date,
+                    'PERIOD_OF_REPORT': period_of_report_val, # Changed from REPORT_DATE
+                    'FILED_DATE': filed_date_val, # Added
                     'SEC_FILE_NUMBER': sec_file_number,
                     
                     # Core security information
@@ -414,7 +416,6 @@ class FormNPORTParser:
                     'TITLE': self._get_xml_text(inv, 'nport:title', namespaces),
                     'CUSIP': self._get_xml_text(inv, 'nport:cusip', namespaces),
                     'LEI': self._get_xml_text(inv, 'nport:lei', namespaces),
-                    'OTHER_ID': None,  # Will be filled below
                     'BALANCE': self._get_xml_text(inv, 'nport:balance', namespaces),
                     'UNITS': self._get_xml_text(inv, 'nport:units', namespaces),
                     'CURRENCY': self._get_xml_text(inv, 'nport:curCd', namespaces),
@@ -444,7 +445,6 @@ class FormNPORTParser:
                     # Derivative - initialize with defaults
                     'DERIVATIVE_CAT': None,
                     'COUNTERPARTY_NAME': None,
-                    'COUNTERPARTY_LEI': None,
                     
                     # Asset-backed securities - initialize with defaults
                     'ABS_CAT': None,
@@ -476,7 +476,6 @@ class FormNPORTParser:
                 if derivative_info is not None:
                     holding['DERIVATIVE_CAT'] = self._get_xml_text(derivative_info, 'nport:derivCat', namespaces)
                     holding['COUNTERPARTY_NAME'] = self._get_xml_text(derivative_info, 'nport:counterpartyName', namespaces)
-                    holding['COUNTERPARTY_LEI'] = self._get_xml_text(derivative_info, 'nport:counterpartyLei', namespaces)
                 
                 # Asset-backed securities
                 abs_info = inv.find('nport:assetBackedSec', namespaces)
@@ -504,11 +503,8 @@ class FormNPORTParser:
                         # else: # Removed assignment to holding['OTHER_ID']
                         #      holding['OTHER_ID'] = other_id_elem.get('value')
                 else:
-                    # If CUSIP was found directly, still check for OTHER_ID if it's different (No longer needed as OTHER_ID is removed)
-                    # other_id_elem = inv.find('.//nport:idenOther', namespaces)
-                    # if other_id_elem is not None:
-                    #    holding['OTHER_ID'] = other_id_elem.get('value')
-                    pass # No action needed for OTHER_ID here
+                    # If CUSIP was found directly, no action needed for OTHER_ID
+                    pass
 
                 # Fallback for general LEI if not directly parsed and not found as CUSIP in idenOther
                 if not holding['LEI']:
@@ -517,10 +513,7 @@ class FormNPORTParser:
                         id_type = other_id_elem_for_lei.get('type')
                         if id_type and 'LEI' in id_type.upper():
                             holding['LEI'] = other_id_elem_for_lei.get('value')
-                        # If LEI was found in idenOther, clear OTHER_ID if it was the same, to avoid duplication
-                        # This part is no longer needed as OTHER_ID is removed
-                        # if holding['OTHER_ID'] == holding['LEI']:
-                        #    holding['OTHER_ID'] = None
+                        # If LEI was found in idenOther, no need to clear OTHER_ID as it's removed
 
                 # Additional handling for investment categories
                 inv_data = self._get_xml_text(inv, 'nport:invCategory', namespaces)
@@ -533,7 +526,8 @@ class FormNPORTParser:
                 for inv in root.findall('.//invstOrSec'):
                     holding = {
                         'HOLDING_ID': None,
-                        'REPORT_DATE': report_date,
+                        'PERIOD_OF_REPORT': period_of_report_val,
+                        'FILED_DATE': filed_date_val,
                         'SEC_FILE_NUMBER': sec_file_number,
                         'SECURITY_NAME': self._get_xml_text_simple(inv, 'name'),
                         'TITLE': None,
@@ -561,7 +555,6 @@ class FormNPORTParser:
                         'NUM_PAYMENTS_ARREARS': None,
                         'DERIVATIVE_CAT': None,
                         'COUNTERPARTY_NAME': None,
-                        'COUNTERPARTY_LEI': None,
                         'ABS_CAT': None,
                         'ABS_SUB_CAT': None,
                         'CREATED_AT': pd.Timestamp.now(),
@@ -622,18 +615,30 @@ class FormNPORTParser:
                 })
 
     def _convert_holdings_data_types(self, df: pd.DataFrame):
-        """Convert data types for holdings DataFrame."""
-        # Numeric columns
+        """Convert holdings data types for consistency."""
+        if df.empty:
+            return
+
         numeric_cols = [
             'BALANCE', 'VALUE_USD', 'PCT_VALUE', 'ANNUAL_RATE', 'NUM_PAYMENTS_ARREARS'
         ]
-        
         for col in numeric_cols:
             if col in df.columns:
-                # Clean and convert numeric data
-                df[col] = df[col].astype(str).str.replace(r'[\s,]+', '', regex=True)
                 df[col] = pd.to_numeric(df[col], errors='coerce')
-        
+
+        # Convert date columns to datetime, handling potential errors by setting to NaT
+        date_cols = ['PERIOD_OF_REPORT', 'FILED_DATE', 'MATURITY_DATE'] # Added PERIOD_OF_REPORT, FILED_DATE, removed REPORT_DATE
+        for col in date_cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+
+        # Convert specific columns to string to ensure consistency
+        text_columns = df.select_dtypes(include=['object']).columns
+        for col in text_columns:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.replace(r'[\r\n\t]', ' ', regex=True)
+                df[col] = df[col].str.replace(r'"', '""', regex=True)
+
         # Boolean columns
         boolean_cols = [
             'IS_RESTRICTED', 'IS_CASH_COLLATERAL', 'IS_NON_CASH_COLLATERAL', 
@@ -645,13 +650,7 @@ class FormNPORTParser:
                     'Y': True, 'N': False, 'true': True, 'false': False,
                     'YES': True, 'NO': False, '1': True, '0': False
                 })
-        
-        # Date columns
-        date_cols = ['REPORT_DATE', 'MATURITY_DATE']
-        for col in date_cols:
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors='coerce')
-    
+
     def _get_form_type(self, content: str) -> str:
         """Extract form type from content."""
         match = re.search(r"CONFORMED SUBMISSION TYPE:\s+([\w\-]+)", content)
