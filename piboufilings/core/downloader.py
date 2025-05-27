@@ -33,12 +33,14 @@ from .rate_limiter import GlobalRateLimiter
 class SECDownloader:
     """A class to handle downloading SEC EDGAR filings."""
     
-    def __init__(self, user_agent: str, log_dir: str = "./logs", max_workers: int = 5):
+    def __init__(self, user_name: str, user_agent_email: str, package_version: str = "0.2.1", log_dir: str = "./logs", max_workers: int = 5):
         """
         Initialize the SEC downloader.
         
         Args:
-            user_agent: Email address for SEC's fair access rules (required)
+            user_name: Name of the user or organization
+            user_agent_email: Contact email address for SEC's fair access rules (required)
+            package_version: Version of the piboufilings package
             log_dir: Directory to store log files (defaults to './logs')
             max_workers: Maximum number of parallel download workers (defaults to 5)
         """
@@ -46,7 +48,7 @@ class SECDownloader:
         
         # Create headers with the provided user_agent
         self.headers = DEFAULT_HEADERS.copy()
-        self.headers["User-Agent"] = f"piboufilings/0.1.0 ({user_agent})"
+        self.headers["User-Agent"] = f"piboufilings/{package_version} ({user_name}; contact: {user_agent_email})"
             
         self.logger = FilingLogger(log_dir=log_dir)
         self.last_request_time = time.time() - REQUEST_DELAY  # Initialize to allow immediate first request
@@ -278,11 +280,20 @@ class SECDownloader:
             raw_path = None
             if save_raw:
                 try:
+                    form_13f_file_number_for_save = None
+                    if "13F" in form_type: # Check if it's a 13F type filing
+                        match = re.search(r"form13FFileNumber>([^<]+)</", response.text)
+                        if match:
+                            form_13f_file_number_for_save = match.group(1).strip()
+                        else:
+                            form_13f_file_number_for_save = "unknown_13F_file_number" # Placeholder
+
                     raw_path = self._save_raw_filing(
                         cik=cik,
                         form_type=form_type,
                         accession_number=accession_number,
-                        content=response.text
+                        content=response.text,
+                        form_13f_file_number_for_path=form_13f_file_number_for_save
                     )
                 except IOError as e:
                     self.logger.log_operation(
@@ -337,7 +348,8 @@ class SECDownloader:
         cik: str,
         form_type: str,
         accession_number: str,
-        content: str
+        content: str,
+        form_13f_file_number_for_path: Optional[str] = None
     ) -> str:
         """
         Save a raw filing to disk.
@@ -347,6 +359,7 @@ class SECDownloader:
             form_type: Type of form
             accession_number: Filing accession number
             content: Raw filing content
+            form_13f_file_number_for_path: Optional form 13F file number for directory and filename
             
         Returns:
             str: Path to the saved file
@@ -358,19 +371,26 @@ class SECDownloader:
         os.makedirs(DATA_DIR, exist_ok=True)
         os.makedirs(os.path.join(DATA_DIR, "raw"), exist_ok=True)
         
-        # Create directory structure
-        cik_dir = os.path.join(DATA_DIR, "raw", cik)
+        # Determine primary directory based on form type
+        primary_identifier_dir: str
+        if "13F" in form_type and form_13f_file_number_for_path and form_13f_file_number_for_path != "unknown_13F_file_number":
+            # Sanitize form_13f_file_number_for_path for use as a directory name
+            sane_form_13f_fn = form_13f_file_number_for_path.replace('-', '_').replace('/', '_')
+            primary_identifier_dir = os.path.join(DATA_DIR, "raw", sane_form_13f_fn)
+        else:
+            primary_identifier_dir = os.path.join(DATA_DIR, "raw", cik)
         
         #Check if this is an exhibit filing
         is_exhibit = "EX" in form_type
         if is_exhibit:
-            return np.nan
+            return np.nan # Using np.nan to signify not saved, consistent with potential existing logic
         # Check if this is an amendment filing
         is_amendment = form_type.endswith("/A") or "/A" in form_type
         
         # Handle the form type path correctly
         base_form_type = form_type.split("/A")[0] if is_amendment else form_type
-        form_dir = os.path.join(cik_dir, base_form_type)
+        # The form_dir is now relative to the primary_identifier_dir
+        form_dir = os.path.join(primary_identifier_dir, base_form_type)
         os.makedirs(form_dir, exist_ok=True)
         
         # If it's an amendment, create an A subfolder
@@ -381,8 +401,18 @@ class SECDownloader:
         else:
             output_dir = form_dir
         
-        # Save the filing
-        output_path = os.path.join(output_dir, f"{cik}_{form_type}_{accession_number}.txt")
+        # Determine filename based on form type
+        filename: str
+        if "13F" in form_type and form_13f_file_number_for_path and form_13f_file_number_for_path != "unknown_13F_file_number":
+            # Sanitize form_13f_file_number_for_path for use as a filename
+            sane_form_13f_fn_for_file = form_13f_file_number_for_path.replace('/', '_') # Fewer replacements needed for filename usually
+            filename = f"{sane_form_13f_fn_for_file}.txt"
+        else:
+            # Sanitize form_type for filename
+            sane_form_type = form_type.replace('/', '_')
+            filename = f"{cik}_{sane_form_type}_{accession_number}.txt"
+            
+        output_path = os.path.join(output_dir, filename)
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(content)
         

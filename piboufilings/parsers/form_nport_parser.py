@@ -47,69 +47,84 @@ class FormNPORTParser:
             # Handle regular NPORT filings with holdings - XML data
             xml_data = self._extract_xml_data(content)
             if xml_data:
-                result['holdings'] = self._parse_holdings_from_xml(xml_data, result['filing_info'])
+                sec_file_number = None
+                if not result['filing_info'].empty and 'SEC_FILE_NUMBER' in result['filing_info'].columns:
+                    sec_file_number_val = result['filing_info']['SEC_FILE_NUMBER'].iloc[0]
+                    if pd.notna(sec_file_number_val):
+                        sec_file_number = str(sec_file_number_val)
+
+                result['holdings'] = self._parse_holdings_from_xml(xml_data, result['filing_info'], sec_file_number)
         
         return result
     
-    def save_parsed_data(self, parsed_data: Dict[str, pd.DataFrame], accession_number: str, cik: str):
+    def save_parsed_data(self, parsed_data: Dict[str, pd.DataFrame]):
         """Save parsed data to CSV files with proper CSV handling - matching 13F structure."""
-        for data_type, df in parsed_data.items():
+        for data_type, df_original in parsed_data.items():
             
+            if df_original.empty:
+                continue
+
+            df_to_save = df_original.copy()
+
             if data_type == "holdings":
-                # Save holdings data (security-specific only)
-                if not df.empty:
-                    # Ensure CIK is in the DataFrame - add it as the first column
-                    df_with_cik = df.copy()
-                    df_with_cik.insert(0, "CIK", int(cik))  # Ensure CIK is integer
+                if not df_to_save.empty:
                     
-                    # Define exact column order matching database schema
+
                     expected_columns = [
-                        'CIK', 'ACCESSION_NUMBER', 'HOLDING_ID', 'REPORT_DATE', 
-                        'SECURITY_NAME', 'LEI', 'TITLE', 'CUSIP', 'ISIN', 'OTHER_ID', 
-                        'OTHER_ID_TYPE', 'BALANCE', 'UNITS', 'CURRENCY', 'VALUE_USD', 
+                        'CUSIP', 'REPORT_DATE', 'SEC_FILE_NUMBER',
+                        'SECURITY_NAME', 'TITLE', 'OTHER_ID', 
+                        'BALANCE', 'UNITS', 'CURRENCY', 'VALUE_USD', 
                         'PCT_VALUE', 'PAYOFF_PROFILE', 'ASSET_CATEGORY', 'ISSUER_CATEGORY', 
                         'COUNTRY', 'IS_RESTRICTED', 'FAIR_VALUE_LEVEL', 'IS_CASH_COLLATERAL', 
                         'IS_NON_CASH_COLLATERAL', 'IS_LOAN_BY_FUND', 'MATURITY_DATE', 
                         'COUPON_KIND', 'ANNUAL_RATE', 'IS_DEFAULT', 'NUM_PAYMENTS_ARREARS', 
-                        'DERIVATIVE_CAT', 'COUNTERPARTY_NAME', 'COUNTERPARTY_LEI', 
+                        'DERIVATIVE_CAT', 'COUNTERPARTY_NAME',
                         'ABS_CAT', 'ABS_SUB_CAT', 'CREATED_AT', 'UPDATED_AT'
-                    ]
-                    
+                    ]                    
+                                  
                     # Ensure all expected columns exist with proper defaults
                     for col in expected_columns:
-                        if col not in df_with_cik.columns:
-                            df_with_cik[col] = pd.NA
+                        if col not in df_to_save.columns:
+                            df_to_save[col] = pd.NA
                     
                     # Reorder columns to match schema
-                    df_with_cik = df_with_cik.reindex(columns=expected_columns)
+                    df_to_save = df_to_save.reindex(columns=expected_columns)
                     
                     # Clean text fields to prevent CSV parsing issues
-                    text_columns = df_with_cik.select_dtypes(include=['object']).columns
+                    text_columns = df_to_save.select_dtypes(include=['object']).columns
                     for col in text_columns:
-                        if col in df_with_cik.columns:
-                            df_with_cik[col] = df_with_cik[col].astype(str).str.replace(r'[\r\n\t]', ' ', regex=True)
-                            df_with_cik[col] = df_with_cik[col].str.replace(r'"', '""', regex=True)
+                        if col in df_to_save.columns:
+                            df_to_save[col] = df_to_save[col].astype(str).str.replace(r'[\r\n\t]', ' ', regex=True)
+                            df_to_save[col] = df_to_save[col].str.replace(r'"', '""', regex=True)
                     
                     filepath = self.output_dir / f"nport_holdings.csv"
                     
-                    # Use consistent CSV writing approach like 13F parser
+                    # Drop CUSIP before saving
+                    if 'CUSIP' in df_to_save.columns:
+                        df_to_save = df_to_save.drop(columns=['CUSIP'])
+                    # Drop LEI and COUNTERPARTY_LEI before saving
+                    if 'LEI' in df_to_save.columns:
+                        df_to_save = df_to_save.drop(columns=['LEI'])
+                    if 'COUNTERPARTY_LEI' in df_to_save.columns:
+                        df_to_save = df_to_save.drop(columns=['COUNTERPARTY_LEI'])
+                        
                     if filepath.exists():
-                        df_with_cik.to_csv(filepath, mode='a', header=False, index=False)
+                        df_to_save.to_csv(filepath, mode='a', header=False, index=False)
                     else:
-                        df_with_cik.to_csv(filepath, index=False)
+                        df_to_save.to_csv(filepath, index=False)
             
             elif data_type == "filing_info":
-                # Save comprehensive filing info (includes fund and performance data)
-                if not df.empty:
-                    # Define exact column order matching database schema
+                if not df_to_save.empty:
+                    
+
                     expected_columns = [
-                        'CIK', 'ACCESSION_NUMBER', 'FORM_TYPE', 'PERIOD_OF_REPORT', 'FILED_DATE',
+                        'CIK', 'PERIOD_OF_REPORT', 'FILED_DATE', 'COMPANY_NAME', 'IRS_NUMBER',
                         'SEC_FILE_NUMBER', 'FILM_NUMBER', 'ACCEPTANCE_DATETIME', 'PUBLIC_DOCUMENT_COUNT',
-                        'COMPANY_NAME', 'EIN', 'STATE_INC', 'FISCAL_YEAR_END', 'BUSINESS_STREET_1', 
+                        'STATE_INC', 'FISCAL_YEAR_END', 'BUSINESS_STREET_1', 
                         'BUSINESS_STREET_2', 'BUSINESS_CITY', 'BUSINESS_STATE', 'BUSINESS_ZIP', 
                         'BUSINESS_PHONE', 'MAIL_STREET_1', 'MAIL_STREET_2', 'MAIL_CITY', 
-                        'MAIL_STATE', 'MAIL_ZIP', 'FORMER_COMPANY_NAMES', 'FUND_CIK', 'REPORT_DATE', 
-                        'FUND_REG_NAME', 'FUND_LEI', 'FUND_FILE_NUMBER', 'SERIES_NAME', 'SERIES_LEI', 
+                        'MAIL_STATE', 'MAIL_ZIP', 'FORMER_COMPANY_NAMES', 'REPORT_DATE', 
+                        'FUND_REG_NAME', 'FUND_FILE_NUMBER', 'SERIES_NAME', 'SERIES_LEI',
                         'REPORT_PERIOD_END', 'REPORT_PERIOD_DATE', 'IS_FINAL_FILING',
                         'FUND_TOTAL_ASSETS', 'FUND_TOTAL_LIABS', 'FUND_NET_ASSETS',
                         'ASSETS_ATTR_MISC_SEC', 'ASSETS_INVESTED', 'AMT_PAY_ONE_YR_BANKS_BORR', 
@@ -128,34 +143,41 @@ class FormNPORTParser:
                     
                     # Ensure all expected columns exist
                     for col in expected_columns:
-                        if col not in df.columns:
-                            df[col] = pd.NA
-                    
+                        if col not in df_to_save.columns:
+                            df_to_save[col] = pd.NA
+                        
                     # Reorder columns to match schema
-                    df = df.reindex(columns=expected_columns)
+                    df_to_save = df_to_save.reindex(columns=expected_columns)
                     
                     # Clean text fields
-                    text_columns = df.select_dtypes(include=['object']).columns
+                    text_columns = df_to_save.select_dtypes(include=['object']).columns
                     for col in text_columns:
-                        if col in df.columns:
-                            df[col] = df[col].astype(str).str.replace(r'[\r\n\t]', ' ', regex=True)
-                            df[col] = df[col].str.replace(r'"', '""', regex=True)
+                        if col in df_to_save.columns:
+                            df_to_save[col] = df_to_save[col].astype(str).str.replace(r'[\r\n\t]', ' ', regex=True)
+                            df_to_save[col] = df_to_save[col].str.replace(r'"', '""', regex=True)
                     
                     filepath = self.output_dir / f"nport_filing_info.csv"
                     
-                    # Use consistent CSV writing approach
+                    # Drop CIK before saving
+                    if 'CIK' in df_to_save.columns:
+                        df_to_save = df_to_save.drop(columns=['CIK'])
+                    # Drop FUND_LEI and SERIES_LEI before saving
+                    if 'FUND_LEI' in df_to_save.columns:
+                        df_to_save = df_to_save.drop(columns=['FUND_LEI'])
+                    if 'SERIES_LEI' in df_to_save.columns:
+                        df_to_save = df_to_save.drop(columns=['SERIES_LEI'])
+                        
                     if filepath.exists():
-                        df.to_csv(filepath, mode='a', header=False, index=False)
+                        df_to_save.to_csv(filepath, mode='a', header=False, index=False)
                     else:
-                        df.to_csv(filepath, index=False)
+                        df_to_save.to_csv(filepath, index=False)
 
     def _parse_filing_info(self, content: str) -> pd.DataFrame:
         """Extract comprehensive filing, company, fund, and performance information."""
         # Core filing and company patterns
         patterns = {
-            # Core filing identification
-            "CIK": (r"CENTRAL INDEX KEY:\s*(\d+)", pd.NA),
-            "ACCESSION_NUMBER": (r"ACCESSION NUMBER:\s+([\d\-]+)", pd.NA),
+            # Core filing identification - ACCESSION_NUMBER removed
+            "CIK": (r"CENTRAL INDEX KEY:\s+(\d+)", pd.NA),
             "FORM_TYPE": (r"CONFORMED SUBMISSION TYPE:\s+([\w\-]+)", pd.NA),
             "PERIOD_OF_REPORT": (r"CONFORMED PERIOD OF REPORT:\s+(\d+)", pd.NA),
             "FILED_DATE": (r"FILED AS OF DATE:\s+(\d+)", pd.NA),
@@ -166,7 +188,7 @@ class FormNPORTParser:
             
             # Company information
             "COMPANY_NAME": (r"COMPANY CONFORMED NAME:\s*([^\r\n]+)", pd.NA),
-            "EIN": (r"IRS NUMBER:\s*([\d-]+)", pd.NA),
+            "IRS_NUMBER": (r"(?:IRS NUMBER|EIN):\s*([\d-]+)", pd.NA),
             "STATE_INC": (r"STATE OF INCORPORATION:\s*([A-Z]{2})", pd.NA),
             "FISCAL_YEAR_END": (r"FISCAL YEAR END:\s*(\d{4})", pd.NA),
             
@@ -217,20 +239,18 @@ class FormNPORTParser:
         try:
             # Define complete column order matching database schema
             desired_columns = [
-                # Core filing info
-                "CIK", "ACCESSION_NUMBER", "FORM_TYPE", "PERIOD_OF_REPORT", "FILED_DATE",
+                # Core filing info - ACCESSION_NUMBER removed
+                "CIK", "FORM_TYPE", "PERIOD_OF_REPORT", "FILED_DATE",
                 "SEC_FILE_NUMBER", "FILM_NUMBER", "ACCEPTANCE_DATETIME", "PUBLIC_DOCUMENT_COUNT",
                 
                 # Company info
-                "COMPANY_NAME", "EIN", "STATE_INC", "FISCAL_YEAR_END", 
+                "COMPANY_NAME", "IRS_NUMBER", "STATE_INC", "FISCAL_YEAR_END", 
                 "BUSINESS_STREET_1", "BUSINESS_STREET_2", "BUSINESS_CITY", "BUSINESS_STATE", 
                 "BUSINESS_ZIP", "BUSINESS_PHONE", "MAIL_STREET_1", "MAIL_STREET_2", 
                 "MAIL_CITY", "MAIL_STATE", "MAIL_ZIP", "FORMER_COMPANY_NAMES",
                 
                 # Fund registration info
-                "FUND_CIK", "REPORT_DATE", "FUND_REG_NAME", "FUND_LEI", "FUND_FILE_NUMBER",
-                "SERIES_NAME", "SERIES_LEI", "REPORT_PERIOD_END", "REPORT_PERIOD_DATE", 
-                "IS_FINAL_FILING",
+                "REPORT_DATE", "FUND_REG_NAME", "FUND_FILE_NUMBER", "FUND_LEI", "SERIES_NAME", "SERIES_LEI",
                 
                 # Financial metrics
                 "FUND_TOTAL_ASSETS", "FUND_TOTAL_LIABS", "FUND_NET_ASSETS",
@@ -299,9 +319,8 @@ class FormNPORTParser:
             gen_info = root.find('.//nport:genInfo', namespaces)
             if gen_info is not None:
                 fund_info['FUND_REG_NAME'] = self._get_xml_text(gen_info, 'nport:regName', namespaces)
-                fund_info['FUND_CIK'] = self._get_xml_text(gen_info, 'nport:regCik', namespaces)
-                fund_info['FUND_LEI'] = self._get_xml_text(gen_info, 'nport:regLei', namespaces)
                 fund_info['FUND_FILE_NUMBER'] = self._get_xml_text(gen_info, 'nport:regFileNumber', namespaces)
+                fund_info['FUND_LEI'] = self._get_xml_text(gen_info, 'nport:regLei', namespaces)
                 fund_info['SERIES_NAME'] = self._get_xml_text(gen_info, 'nport:seriesName', namespaces)
                 fund_info['SERIES_LEI'] = self._get_xml_text(gen_info, 'nport:seriesLei', namespaces)
                 fund_info['REPORT_PERIOD_END'] = self._get_xml_text(gen_info, 'nport:repPdEnd', namespaces)
@@ -368,7 +387,7 @@ class FormNPORTParser:
         
         return fund_info
 
-    def _parse_holdings_from_xml(self, xml_data: str, filing_info_df: pd.DataFrame) -> pd.DataFrame:
+    def _parse_holdings_from_xml(self, xml_data: str, filing_info_df: pd.DataFrame, sec_file_number: Optional[str]) -> pd.DataFrame:
         """Parse individual security holdings (security-specific data only)."""
         try:
             root = etree.fromstring(xml_data.encode('utf-8'))
@@ -380,25 +399,22 @@ class FormNPORTParser:
             }
             
             holdings = []
-            accession = filing_info_df['ACCESSION_NUMBER'].iloc[0] if not filing_info_df.empty else None
-            report_date = filing_info_df['PERIOD_OF_REPORT'].iloc[0] if not filing_info_df.empty else None
+            report_date = filing_info_df['REPORT_DATE'].iloc[0] if not filing_info_df.empty else None
             
             # Parse each investment/security - ONLY security-specific data
             for inv in root.findall('.//nport:invstOrSec', namespaces):
                 holding = {
                     # Link to filing info - matching exact schema
-                    'ACCESSION_NUMBER': accession,
                     'HOLDING_ID': None,  # Will be auto-generated in database
                     'REPORT_DATE': report_date,
+                    'SEC_FILE_NUMBER': sec_file_number,
                     
                     # Core security information
                     'SECURITY_NAME': self._get_xml_text(inv, 'nport:name', namespaces),
-                    'LEI': self._get_xml_text(inv, 'nport:lei', namespaces),
                     'TITLE': self._get_xml_text(inv, 'nport:title', namespaces),
                     'CUSIP': self._get_xml_text(inv, 'nport:cusip', namespaces),
-                    'ISIN': None,  # Will be filled below
+                    'LEI': self._get_xml_text(inv, 'nport:lei', namespaces),
                     'OTHER_ID': None,  # Will be filled below
-                    'OTHER_ID_TYPE': None,  # Will be filled below
                     'BALANCE': self._get_xml_text(inv, 'nport:balance', namespaces),
                     'UNITS': self._get_xml_text(inv, 'nport:units', namespaces),
                     'CURRENCY': self._get_xml_text(inv, 'nport:curCd', namespaces),
@@ -439,16 +455,6 @@ class FormNPORTParser:
                     'UPDATED_AT': pd.Timestamp.now()
                 }
                 
-                # Enhanced identifiers
-                isin_elem = inv.find('.//nport:isin', namespaces)
-                if isin_elem is not None:
-                    holding['ISIN'] = isin_elem.get('value')
-                
-                other_elem = inv.find('.//nport:other', namespaces)
-                if other_elem is not None:
-                    holding['OTHER_ID'] = other_elem.get('value')
-                    holding['OTHER_ID_TYPE'] = other_elem.get('otherDesc')
-                
                 # Security lending information
                 sec_lending = inv.find('nport:securityLending', namespaces)
                 if sec_lending is not None:
@@ -478,22 +484,62 @@ class FormNPORTParser:
                     holding['ABS_CAT'] = self._get_xml_text(abs_info, 'nport:absCat', namespaces)
                     holding['ABS_SUB_CAT'] = self._get_xml_text(abs_info, 'nport:absSubCat', namespaces)
                 
+                # Extract CUSIP and ISIN with conditional logic
+                # holding['OTHER_ID'] = None # Removed OTHER_ID initialization
+
+                # Try to get CUSIP first if not already populated (it should be by the direct parse above)
+                if holding['CUSIP'] is None:
+                    cusip_elem = inv.find('.//nport:cusip', namespaces)
+                    if cusip_elem is not None and cusip_elem.text:
+                        holding['CUSIP'] = cusip_elem.text.strip()
+                
+                # Fallback: Try to find 'idenOther' if 'cusip' is not found or is empty
+                if not holding['CUSIP']:
+                    other_id_elem = inv.find('.//nport:idenOther', namespaces)
+                    if other_id_elem is not None:
+                        # Check if this otherId is a CUSIP (though ideally it was caught by direct nport:cusip)
+                        id_type = other_id_elem.get('type')
+                        if id_type and 'CUSIP' in id_type.upper():
+                            holding['CUSIP'] = other_id_elem.get('value')
+                        # else: # Removed assignment to holding['OTHER_ID']
+                        #      holding['OTHER_ID'] = other_id_elem.get('value')
+                else:
+                    # If CUSIP was found directly, still check for OTHER_ID if it's different (No longer needed as OTHER_ID is removed)
+                    # other_id_elem = inv.find('.//nport:idenOther', namespaces)
+                    # if other_id_elem is not None:
+                    #    holding['OTHER_ID'] = other_id_elem.get('value')
+                    pass # No action needed for OTHER_ID here
+
+                # Fallback for general LEI if not directly parsed and not found as CUSIP in idenOther
+                if not holding['LEI']:
+                    other_id_elem_for_lei = inv.find('.//nport:idenOther', namespaces) # Re-find or use existing if safe
+                    if other_id_elem_for_lei is not None:
+                        id_type = other_id_elem_for_lei.get('type')
+                        if id_type and 'LEI' in id_type.upper():
+                            holding['LEI'] = other_id_elem_for_lei.get('value')
+                        # If LEI was found in idenOther, clear OTHER_ID if it was the same, to avoid duplication
+                        # This part is no longer needed as OTHER_ID is removed
+                        # if holding['OTHER_ID'] == holding['LEI']:
+                        #    holding['OTHER_ID'] = None
+
+                # Additional handling for investment categories
+                inv_data = self._get_xml_text(inv, 'nport:invCategory', namespaces)
+                holding['INVESTMENT_CATEGORY'] = inv_data if inv_data else "N/A"
+                
                 holdings.append(holding)
             
             # Fallback parsing without namespaces if no holdings found
             if not holdings:
                 for inv in root.findall('.//invstOrSec'):
                     holding = {
-                        'ACCESSION_NUMBER': accession,
                         'HOLDING_ID': None,
                         'REPORT_DATE': report_date,
+                        'SEC_FILE_NUMBER': sec_file_number,
                         'SECURITY_NAME': self._get_xml_text_simple(inv, 'name'),
-                        'LEI': None,
                         'TITLE': None,
                         'CUSIP': self._get_xml_text_simple(inv, 'cusip'),
-                        'ISIN': None,
-                        'OTHER_ID': None,
-                        'OTHER_ID_TYPE': None,
+                        'LEI': self._get_xml_text_simple(inv, 'lei'), # Added general LEI for holding
+                        # 'OTHER_ID': None, # Removed OTHER_ID
                         'BALANCE': self._get_xml_text_simple(inv, 'balance'),
                         'UNITS': None,
                         'CURRENCY': None,
@@ -551,7 +597,7 @@ class FormNPORTParser:
         
         # Numeric columns
         numeric_cols = [
-            'CIK', 'FILM_NUMBER', 'FISCAL_YEAR_END', 'PUBLIC_DOCUMENT_COUNT', 'FUND_CIK',
+            'CIK', 'FILM_NUMBER', 'FISCAL_YEAR_END', 'PUBLIC_DOCUMENT_COUNT',
             'FUND_TOTAL_ASSETS', 'FUND_TOTAL_LIABS', 'FUND_NET_ASSETS',
             'ASSETS_ATTR_MISC_SEC', 'ASSETS_INVESTED', 'DELAY_DELIVERY', 
             'STANDBY_COMMIT', 'LIQUID_PREF', 'CASH_NOT_RPTD_IN_COR_D'
@@ -662,66 +708,12 @@ class FormNPORTParser:
             return None
 
     def get_cik_from_content(self, content: str) -> Optional[str]:
-        """Extract CIK from filing content for use when calling save_parsed_data."""
+        """Extract CIK from filing content."""
         try:
-            match = re.search(r"CENTRAL INDEX KEY:\s*(\d+)", content)
+            match = re.search(r"CENTRAL INDEX KEY:\s+(\d+)", content)
             return match.group(1) if match else None
         except Exception:
             return None
-
-    @staticmethod
-    def safe_read_csv(filepath: str) -> pd.DataFrame:
-        """Safely read CSV files that may have parsing issues."""
-        try:
-            # First try normal reading
-            return pd.read_csv(filepath)
-        except pd.errors.ParserError as e:
-            
-            try:
-                # Try with different parameters to handle malformed CSV
-                return pd.read_csv(
-                    filepath, 
-                    on_bad_lines='skip',  # Skip bad lines
-                    quoting=1,  # Handle quoted fields
-                    escapechar='\\',
-                    engine='python'  # More flexible parser
-                )
-            except Exception as e2:
-                
-                # Last resort: manual parsing
-                return FormNPORTParser._manual_csv_repair(filepath)
-    
-    @staticmethod
-    def _manual_csv_repair(filepath: str) -> pd.DataFrame:
-        """Manually repair and read problematic CSV file."""
-        import csv
-        
-        rows = []
-        header = None
-        problematic_lines = []
-        
-        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-            reader = csv.reader(f, quoting=csv.QUOTE_ALL, escapechar='\\')
-            
-            for line_num, row in enumerate(reader):
-                if line_num == 0:
-                    header = row
-                    expected_cols = len(header)
-                else:
-                    if len(row) == expected_cols:
-                        rows.append(row)
-                    else:
-                        problematic_lines.append((line_num + 1, len(row), expected_cols))
-                        # Try to fix by truncating or padding
-                        if len(row) > expected_cols:
-                            # Truncate extra columns
-                            rows.append(row[:expected_cols])
-                        else:
-                            # Pad missing columns with None
-                            padded_row = row + [None] * (expected_cols - len(row))
-                            rows.append(padded_row)
-        
-        return pd.DataFrame(rows, columns=header)
 
 
 # Usage example
@@ -734,14 +726,9 @@ def process_nport_filing(file_path: str, parser: FormNPORTParser):
         # Parse the filing
         parsed_data = parser.parse_filing(content)
         
-        # Extract CIK and accession number for saving
-        cik = parser.get_cik_from_content(content)
-        accession_match = re.search(r"ACCESSION NUMBER:\s+([\d\-]+)", content)
-        accession = accession_match.group(1) if accession_match else "unknown"
-        
         # Save the parsed data
-        if cik:
-            parser.save_parsed_data(parsed_data, accession, cik)
+        # CIK and Accession Number are no longer extracted or used by the parser's save method.
+        parser.save_parsed_data(parsed_data)
             
     except Exception as e:
         print(f"Error processing {file_path}: {str(e)}")

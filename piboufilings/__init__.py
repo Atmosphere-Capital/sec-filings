@@ -19,6 +19,14 @@ from .parsers.form_nport_parser import FormNPORTParser
 from .parsers.parser_utils import get_parser_for_form_type, validate_filing_content
 from .config.settings import DATA_DIR
 
+try:
+    from ._version import __version__ as package_version
+except ImportError:
+    try:
+        from .version import __version__ as package_version
+    except ImportError:
+        package_version = "0.2.1" # Fallback
+
 
 ### IF YOU'RE BUILDING A NEW PARSER, YOU'LL NEED TO UPDATE THIS FUNCTION ###
 def get_parser_for_form_type_internal(form_type: str, base_dir: str):
@@ -124,8 +132,28 @@ def process_filings_for_cik(current_cik, downloaded, form_type, base_dir, logger
             # Parse the filing using the new parser structure
             parsed_data = parser.parse_filing(content)
             
-            # Save parsed data
-            parser.save_parsed_data(parsed_data, accession_number, cik)
+            # Save parsed data according to parser type
+            if isinstance(parser, Form13FParser):
+                form_13f_file_number_for_saving = "unknown_file_number"
+                if 'filing_info' in parsed_data and not parsed_data['filing_info'].empty:
+                    filing_info_df = parsed_data['filing_info']
+                    if 'FORM_13F_FILE_NUMBER' in filing_info_df.columns:
+                        val = filing_info_df['FORM_13F_FILE_NUMBER'].iloc[0]
+                        if pd.notna(val):
+                            form_13f_file_number_for_saving = str(val)
+                parser.save_parsed_data(parsed_data, form_13f_file_number_for_saving, cik)
+            elif isinstance(parser, FormNPORTParser):
+                parser.save_parsed_data(parsed_data)
+            else:
+                # Fallback or error for unknown parser types, though get_parser_for_form_type_internal should prevent this.
+                logger.log_operation(
+                    cik=current_cik,
+                    accession_number=accession_number, # Accession still available here from the loop
+                    operation_type="SAVE_PARSED_DATA_ERROR",
+                    download_success=True, 
+                    parse_success=True, # Assuming parse was ok, but save failed due to parser type
+                    download_error_message=f"Cannot save data: Unknown parser type {type(parser).__name__}"
+                )
             
             # Track parsing results
             holdings_count = len(parsed_data['holdings'])
@@ -183,7 +211,8 @@ def process_filings_for_cik(current_cik, downloaded, form_type, base_dir, logger
 
 
 def get_filings(
-    user_agent: str,
+    user_name: str,
+    user_agent_email: str,
     cik: Union[str, List[str], None] = None,
     form_type: Union[str, List[str]] = '13F-HR',
     start_year: int = None,
@@ -198,7 +227,8 @@ def get_filings(
     Download and parse SEC filings for one or more companies and form types.
     
     Args:
-        user_agent: Email address for SEC's fair access rules (required)
+        user_name: Name of the user or organization (required for User-Agent)
+        user_agent_email: Email address for SEC's fair access rules (required for User-Agent)
         cik: Company CIK number(s) - can be a single CIK string, a list of CIKs, or None to get all CIKs
         form_type: Type of form(s) to download (e.g., '13F-HR', ['13F-HR', 'NPORT-P']). Defaults to '13F-HR'.
         start_year: Starting year (defaults to current year)
@@ -222,7 +252,13 @@ def get_filings(
     base_dir = Path(base_dir).resolve()
     
     # Initialize downloader and logger
-    downloader = SECDownloader(user_agent=user_agent, log_dir=log_dir, max_workers=max_workers)
+    downloader = SECDownloader(
+        user_name=user_name, 
+        user_agent_email=user_agent_email, 
+        package_version=package_version,
+        log_dir=log_dir, 
+        max_workers=max_workers
+    )
     logger = FilingLogger(log_dir=log_dir)
 
     logger.log_operation(
@@ -476,22 +512,34 @@ def get_filings(
                         download_error_message=f"Deleted {deleted_count} raw files. Failed to delete {failed_count} files for CIK {current_cik_str}, Form {current_form_str}."
                     )
 
-                    # Attempt to delete empty directories, from deepest to shallowest
-                    raw_data_root = Path(DATA_DIR) / "raw"
-                    cik_level_dir = raw_data_root / current_cik_str
-                    
-                    # Determine paths based on form type and potential amendment
-                    base_form_name_for_dir = current_form_str.split('/A')[0]
-                    form_level_dir = cik_level_dir / base_form_name_for_dir
-
+                    # Determine directory paths for deletion based on actual raw_file_path structure
+                    # This handles both CIK-based and FORM_13F_FILE_NUMBER-based paths.
                     dir_to_try_removing = []
-                    if current_form_str.endswith("/A"):
-                        dir_to_try_removing.append(form_level_dir / "A") # Innermost first (e.g. .../13F-HR/A)
-                    dir_to_try_removing.append(form_level_dir) # Then parent form dir (e.g. .../13F-HR)
-                    dir_to_try_removing.append(cik_level_dir)    # Then CIK dir (e.g. .../0001234567)
+                    valid_raw_paths = downloaded_df["raw_path"].dropna()
+                    if not valid_raw_paths.empty:
+                        first_raw_file_path = Path(valid_raw_paths.iloc[0])
+                        
+                        # Level 1: Directory containing the actual file (e.g., .../13F-HR/A/ or .../13F-HR/)
+                        actual_file_parent_dir = first_raw_file_path.parent
 
+                        # Level 2: Form type directory (e.g., .../13F-HR/)
+                        form_type_level_dir = actual_file_parent_dir
+                        if current_form_str.endswith("/A"):
+                            form_type_level_dir = actual_file_parent_dir.parent # Move up if it was an amendment subdir
+                        
+                        # Level 3: Primary identifier directory (e.g., .../CIK/ or .../FORM_13F_FILE_NUMBER/)
+                        # This is the parent of the form_type_level_dir
+                        primary_id_level_dir = form_type_level_dir.parent
+
+                        # Order for deletion: innermost to outermost
+                        if current_form_str.endswith("/A"):
+                            dir_to_try_removing.append(actual_file_parent_dir) # e.g., .../13F-HR/A (actual_file_parent_dir)
+                        dir_to_try_removing.append(form_type_level_dir)    # e.g., .../13F-HR (form_type_level_dir)
+                        dir_to_try_removing.append(primary_id_level_dir)   # e.g., .../CIK_or_S000XXXX (primary_id_level_dir)
+                    
+                    # Original loop for deleting directories is kept, but uses the new dir_to_try_removing list
                     for dir_path in dir_to_try_removing:
-                        if dir_path.exists():
+                        if dir_path.exists(): # Check if path derived exists
                             try:
                                 if not os.listdir(dir_path): # Check if empty
                                     os.rmdir(dir_path)
