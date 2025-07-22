@@ -36,7 +36,8 @@ class FilingLogger:
                     "download_success", 
                     "download_error_message", 
                     "parse_success",
-                    "error_code"
+                    "error_code",
+                    "custom_identifier"
                 ])
     
     def log_operation(
@@ -48,7 +49,8 @@ class FilingLogger:
         download_success: bool = False, 
         download_error_message: Optional[str] = None, 
         parse_success: Optional[bool] = None,
-        error_code: Optional[Any] = None
+        error_code: Optional[Any] = None,
+        custom_identifier: Optional[str] = None
     ) -> None:
         """
         Log a filing operation to the CSV file.
@@ -73,7 +75,8 @@ class FilingLogger:
                 "True" if download_success else "False",
                 download_error_message or "",
                 "True" if parse_success else "False" if parse_success is not None else "",
-                str(error_code) if error_code is not None else ""
+                str(error_code) if error_code is not None else "",
+                custom_identifier or ""
             ])
     
     def get_logs(self) -> pd.DataFrame:
@@ -93,7 +96,8 @@ class FilingLogger:
                 "download_success", 
                 "download_error_message", 
                 "parse_success",
-                "error_code"
+                "error_code",
+                "custom_identifier"
             ])
         
         return pd.read_csv(self.log_file)
