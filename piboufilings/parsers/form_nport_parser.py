@@ -7,7 +7,7 @@ import pandas as pd
 import re
 from typing import Optional, Dict, Any, List, Tuple
 from pathlib import Path
-from lxml import etree
+from xml.etree import ElementTree as etree
 import os
 
 
@@ -98,10 +98,7 @@ class FormNPORTParser:
                             df_to_save[col] = df_to_save[col].str.replace(r'"', '""', regex=True)
                     
                     filepath = self.output_dir / f"nport_holdings.csv"
-                    
-                    # Drop CUSIP before saving
-                    if 'CUSIP' in df_to_save.columns:
-                        df_to_save = df_to_save.drop(columns=['CUSIP'])
+
                     # Drop LEI before saving (general holding LEI)
                     if 'LEI' in df_to_save.columns:
                         df_to_save = df_to_save.drop(columns=['LEI'])
@@ -117,7 +114,7 @@ class FormNPORTParser:
                     
 
                     expected_columns = [
-                        'CIK', 'PERIOD_OF_REPORT', 'FILED_DATE', 'COMPANY_NAME', 'IRS_NUMBER',
+                        'CIK', 'CUSIP', 'PERIOD_OF_REPORT', 'FILED_DATE', 'COMPANY_NAME', 'IRS_NUMBER',
                         'SEC_FILE_NUMBER', 'FILM_NUMBER', 'ACCEPTANCE_DATETIME', 'PUBLIC_DOCUMENT_COUNT',
                         'STATE_INC', 'FISCAL_YEAR_END', 'BUSINESS_STREET_1', 
                         'BUSINESS_STREET_2', 'BUSINESS_CITY', 'BUSINESS_STATE', 'BUSINESS_ZIP', 

@@ -65,10 +65,7 @@ class Form13FParser:
             if data_type == "holdings":
                 master_name = f"13f_holdings.csv"
                 master_file_path = self.output_dir / master_name
-                
-                # Remove CUSIP before saving
-                if 'CUSIP' in df_to_save.columns:
-                    df_to_save = df_to_save.drop(columns=['CUSIP'])
+
                 
                 # Rename FORM_13F_FILE_NUMBER to SEC_FILE_NUMBER for the CSV output
                 if 'FORM_13F_FILE_NUMBER' in df_to_save.columns:
@@ -85,10 +82,6 @@ class Form13FParser:
                 master_name = f"13f_info.csv"
                 master_file_path = self.output_dir / master_name
 
-                # Remove CIK before saving
-                if 'CIK' in df_to_save.columns:
-                    df_to_save = df_to_save.drop(columns=['CIK'])
-                
                 # Rename FORM_13F_FILE_NUMBER to SEC_FILE_NUMBER for the CSV output
                 if 'FORM_13F_FILE_NUMBER' in df_to_save.columns:
                     df_to_save = df_to_save.rename(columns={'FORM_13F_FILE_NUMBER': 'SEC_FILE_NUMBER'})

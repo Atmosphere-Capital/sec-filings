@@ -7,7 +7,7 @@ from typing import Optional, Tuple, Dict, Any
 import pandas as pd
 import re
 import xml.etree.ElementTree as ET
-from lxml import etree
+from xml.etree import ElementTree as etree
 from ..parsers import Form13FParser
 
 class SECFilingParser:
