@@ -6,7 +6,7 @@ Updated to merge company and filing info into single 13f_info.csv file.
 import pandas as pd
 import re
 import xml.etree.ElementTree as ET
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 from pathlib import Path
 import os
 
@@ -46,9 +46,48 @@ class Form13FParser:
 
         # Extract and parse holdings
         xml_data, date = self._extract_xml(content) # No accession here
+        cik_xml_data, date_cik = self._extract_xml_cik(content)
+
         if xml_data and date and form_13f_file_number:
             result['holdings'] = self._parse_holdings(xml_data, form_13f_file_number, date)
-        
+
+        if cik_xml_data and date_cik and form_13f_file_number:
+            cik_df = self._parse_holdings_cik(cik_xml_data, form_13f_file_number, date_cik)  # e.g., "0001067983"
+            name_df = self._parse_holdings_name(cik_xml_data, form_13f_file_number, date_cik)
+
+        if not cik_df.empty:
+            result['holdings']['FORM_13F_FILE_NUMBER'] = result['holdings']['FORM_13F_FILE_NUMBER'].astype(
+                str).str.strip()
+            cik_df['FORM_13F_FILE_NUMBER'] = cik_df['FORM_13F_FILE_NUMBER'].astype(str).str.strip()
+
+            cik_lookup = (
+                cik_df.dropna(subset=['CIK'])
+                .drop_duplicates('FORM_13F_FILE_NUMBER', keep='last')
+                .set_index('FORM_13F_FILE_NUMBER')['CIK']
+            )
+
+            result['holdings']['CIK'] = result['holdings'].get('CIK')
+            result['holdings']['CIK'] = result['holdings']['CIK'].fillna(
+                result['holdings']['FORM_13F_FILE_NUMBER'].map(cik_lookup)
+            )
+
+        if not cik_df.empty:
+            result['holdings']['FORM_13F_FILE_NUMBER'] = result['holdings']['FORM_13F_FILE_NUMBER'].astype(
+                str).str.strip()
+            name_df['FORM_13F_FILE_NUMBER'] = name_df['FORM_13F_FILE_NUMBER'].astype(str).str.strip()
+
+            name_lookup = (
+                name_df.dropna(subset=['NAME'])
+                .drop_duplicates('FORM_13F_FILE_NUMBER', keep='last')
+                .set_index('FORM_13F_FILE_NUMBER')['NAME']
+            )
+
+            result['holdings']['NAME'] = result['holdings'].get('NAME')
+            result['holdings']['NAME'] = result['holdings']['NAME'].fillna(
+                result['holdings']['FORM_13F_FILE_NUMBER'].map(name_lookup)
+            )
+
+
         return result
     
     def save_parsed_data(self, parsed_data: Dict[str, pd.DataFrame], form_13f_file_number_param: str, cik: str):
@@ -272,7 +311,65 @@ class Form13FParser:
             
         except Exception:
             return None, None # Only xml_content and date
-    
+
+    def _extract_xml_cik(self, content: str) -> Tuple[Optional[str], Optional[str]]:
+        """Extract XML data from 13F filing with enhanced methods. Accession number extraction removed."""
+        try:
+            # Get date
+            date_match = re.search(r"CONFORMED PERIOD OF REPORT:\s+(\d+)", content)
+            date = date_match.group(1) if date_match else None
+
+            # Accession number extraction is removed.
+
+            # Method 1: Find XML blocks between <XML> tags
+            xml_start_tags = [match.start() for match in re.finditer(r'<XML>', content)]
+            xml_end_tags = [match.start() for match in re.finditer(r'</XML>', content)]
+
+            xml_indices = list(zip(xml_start_tags, xml_end_tags))
+
+            if xml_indices:
+                # Use the second XML section (index 1) as it typically contains the holdings data
+                start_index, end_index = xml_indices[0] if len(xml_indices) > 1 else xml_indices[0]
+                xml_content = content[start_index + 5:end_index]  # +5 to skip <XML>
+                # Clean XML declaration
+                xml_content = re.sub(r'<\?xml[^>]+\?>', '', xml_content).strip()
+
+                if xml_content:
+                    return xml_content, date
+
+            # Method 2: Find XML after an XML declaration
+            xml_decl_match = re.search(r'<\?xml[^>]+\?>', content)
+            if xml_decl_match:
+                start_index = xml_decl_match.start()
+                # Find the first opening tag after the XML declaration
+                opening_tag_match = re.search(r'<[^?][^>]*>', content[start_index:])
+                if opening_tag_match:
+                    tag_name = opening_tag_match.group(0).strip('<>').split()[0]
+                    # Find the corresponding closing tag
+                    closing_tag = f'</{tag_name}>'
+                    closing_tag_index = content.rfind(closing_tag, start_index)
+                    if closing_tag_index > start_index:
+                        xml_content = content[start_index:closing_tag_index + len(closing_tag)]
+                        # Clean XML declaration
+                        xml_content = re.sub(r'<\?xml[^>]+\?>', '', xml_content).strip()
+                        return xml_content, date
+
+            # Method 3: Look for informationTable directly
+            cik_match = re.search(
+                r'<edgarSubmission[^>]*>.*?</edgarSubmission>',
+                content,
+                re.DOTALL | re.IGNORECASE
+            )
+            if cik_match:
+                xml_content = cik_match.group(0)
+                return xml_content, date
+
+            return None, date  # Only xml_content and date
+
+        except Exception:
+            return None, None  # Only xml_content and date
+
+
     def _parse_holdings(self, xml_data: str, form_13f_file_number: str, date: str) -> pd.DataFrame:
         """Parse comprehensive holdings from 13F XML data with ALL SEC parser fields."""
         try:
@@ -384,7 +481,113 @@ class Form13FParser:
             
         except Exception as e:
             return pd.DataFrame()
-    
+
+    def _parse_holdings_cik(self, xml_data: str, form_13f_file_number: str, date: str) -> pd.DataFrame:
+        """Parse comprehensive holdings from 13F XML data with ALL SEC parser fields."""
+        try:
+            # Try to parse XML
+            root = ET.fromstring(xml_data)
+
+            # Common 13F namespaces
+            namespaces = {
+                'ns1': 'http://www.sec.gov/edgar/thirteenffiler',
+                'ns': 'http://www.sec.gov/edgar/thirteenffiler',
+                '': 'http://www.sec.gov/edgar/thirteenffiler'
+            }
+
+            holdings = []
+
+            # Try different namespace patterns systematically
+            for ns_prefix in ['ns1:', 'ns:', '']:
+                edgarSubmission = root.findall(f'.//{ns_prefix}headerData', namespaces)
+                if not edgarSubmission:
+                    # Try without namespace
+                    edgarSubmission = root.findall('.//headerData')
+
+                if edgarSubmission:
+                    for entry in edgarSubmission:
+                        holding = {
+                            'FORM_13F_FILE_NUMBER': form_13f_file_number,
+                            'CONFORMED_DATE': date,
+                            'CIK': self._get_xml_text(entry, f'{ns_prefix}filerInfo/filer/credentials/cik', namespaces),
+                        }
+                        holdings.append(holding)
+                    break  # Found data, no need to try other namespace patterns
+
+            # If no namespaced elements found, try without any namespace
+            if not holdings:
+                for entry in root.findall('.//headerData'):
+                    holding = {
+                        'FORM_13F_FILE_NUMBER': form_13f_file_number,
+                        'CONFORMED_DATE': date,
+                        'CIK': self._get_xml_text(entry, 'filerInfo/filer/credentials/cik'),
+                    }
+                    holdings.append(holding)
+
+            if not holdings:
+                return pd.DataFrame()
+
+            df = pd.DataFrame(holdings)
+
+            return df
+
+        except Exception as e:
+            return pd.DataFrame()
+
+
+    def _parse_holdings_name(self, xml_data: str, form_13f_file_number: str, date: str) -> pd.DataFrame:
+        """Parse comprehensive holdings from 13F XML data with ALL SEC parser fields."""
+        try:
+            # Try to parse XML
+            root = ET.fromstring(xml_data)
+
+            # Common 13F namespaces
+            namespaces = {
+                'ns1': 'http://www.sec.gov/edgar/thirteenffiler',
+                'ns': 'http://www.sec.gov/edgar/thirteenffiler',
+                '': 'http://www.sec.gov/edgar/thirteenffiler'
+            }
+
+            holdings = []
+
+            # Try different namespace patterns systematically
+            for ns_prefix in ['ns1:', 'ns:', '']:
+                formData = root.findall(f'.//{ns_prefix}formData', namespaces)
+                if not formData:
+                    # Try without namespace
+                    formData = root.findall('.//headerData')
+
+                if formData:
+                    for entry in formData:
+                        holding = {
+                        'FORM_13F_FILE_NUMBER': form_13f_file_number,
+                        'CONFORMED_DATE': date,
+                        'NAME': self._get_xml_text(entry, f'{ns_prefix}coverPage/filingManager/name', namespaces),
+                    }
+                        holdings.append(holding)
+                    break  # Found data, no need to try other namespace patterns
+
+            # If no namespaced elements found, try without any namespace
+            if not holdings:
+                for entry in root.findall('.//headerData'):
+                    holding = {
+                        'FORM_13F_FILE_NUMBER': form_13f_file_number,
+                        'CONFORMED_DATE': date,
+                        'NAME': self._get_xml_text(entry, 'coverPage/filingManager/name'),
+                    }
+
+                    holdings.append(holding)
+
+            if not holdings:
+                return pd.DataFrame()
+
+            df = pd.DataFrame(holdings)
+
+            return df
+
+        except Exception as e:
+            return pd.DataFrame()
+
     def _get_xml_text(self, element, path: str, namespaces: dict) -> Optional[str]:
         """Safely extract text from XML element with namespace support."""
         try:
