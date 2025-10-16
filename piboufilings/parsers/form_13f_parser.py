@@ -71,7 +71,7 @@ class Form13FParser:
                 result['holdings']['FORM_13F_FILE_NUMBER'].map(cik_lookup)
             )
 
-        if not cik_df.empty:
+        if not name_df.empty:
             result['holdings']['FORM_13F_FILE_NUMBER'] = result['holdings']['FORM_13F_FILE_NUMBER'].astype(
                 str).str.strip()
             name_df['FORM_13F_FILE_NUMBER'] = name_df['FORM_13F_FILE_NUMBER'].astype(str).str.strip()
